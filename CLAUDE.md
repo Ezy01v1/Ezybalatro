@@ -53,7 +53,7 @@ Todos se corren desde la raíz. Requisitos: Node 24 (`.nvmrc`) y pnpm 10 (`packa
 - Dev servidor: `pnpm dev:server` (copia `apps/server/.env.example` a `apps/server/.env`)
 - Lint: `pnpm lint`
 - Typecheck: `pnpm typecheck` (compila antes `packages/*`)
-- Tests: `pnpm test` (todo) · `pnpm test:engine` · `pnpm test:server` (unit + e2e) · `pnpm test:mobile` · e2e móvil con Maestro: pendiente
+- Tests: `pnpm test` (todo) · `pnpm test:engine` (cobertura: `pnpm --filter @naipes/engine test:coverage`) · `pnpm test:server` (unit + e2e) · `pnpm test:mobile` · e2e móvil con Maestro: pendiente
 - Build: `pnpm build` (packages + server) · bundle móvil: `pnpm export:mobile`
 - Compilar solo los paquetes compartidos: `pnpm build:packages`
 - Migraciones (crear / aplicar): pendiente, Fase 3 (Prisma, ADR 0005)
@@ -156,9 +156,12 @@ Notas del esqueleto:
 ## Estado actual
 
 - **Hecho:** Fase 0. ADRs 0001–0007 aceptados, modelo de dominio (`docs/domain-model.md`), esqueleto del monorepo (mobile con pantalla de inicio, server con `/health` + gateway `ping`, engine con `Rng`/`shuffle`, shared con schemas de error), lint/typecheck/tests desde la raíz, CI en GitHub Actions.
-- **En curso:** —
-- **Siguiente:** Fase 1 (engine): cartas, PRNG con semilla, evaluador de manos, scoring del roguelike.
+- **Hecho:** Fase 1 (engine), en `main`: cartas, `SeededRng` (sfc32 + cyrb128, sub-streams por propósito), evaluador Hold'em (5 de 7) y del roguelike (1–5 cartas), reducer de Hold'em NL (`holdemReducer`, `legalActions`, `viewFor`, botes laterales), scoring del roguelike con comodines como datos + hooks, y reducer de la run con log reproducible (`createRun`/`runReducer`/`replayRun`). El mazo de cada mano de Hold'em entra barajado en la acción `postBlinds` (lo baraja el server con CSPRNG).
+- **En curso:** validar con el usuario las interpretaciones de reglas de Hold'em de la Fase 1.
+- **Siguiente:** Fase 2 (roguelike jugable en el móvil).
 - **Deuda técnica conocida:**
+  - Hold'em simplificado: botón móvil sin dead button ni ciegas perdidas; quien se sienta entra a la siguiente mano sin pagar BB.
+  - Roguelike: mejoras de carta existen en el pipeline pero aún no hay forma de obtenerlas; consumibles solo "subir nivel de mano".
   - Los tests e2e del server tardan ~30 s (probablemente por el cierre del socket); revisar.
   - Swagger/OpenAPI todavía no está montado (se agrega con el primer endpoint REST real).
   - Logs estructurados (pino + requestId) y `helmet` pendientes para antes de exponer el server.
