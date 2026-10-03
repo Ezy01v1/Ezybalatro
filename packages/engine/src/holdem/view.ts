@@ -14,6 +14,9 @@ export interface SeatView {
   readonly playerId: string;
   readonly stack: number;
   readonly status: SeatStatus;
+  readonly owesBigBlind: boolean;
+  readonly owesSmallBlind: boolean;
+  readonly postBlindsToEnter: boolean;
 }
 
 export interface HandPlayerView {
@@ -31,17 +34,19 @@ export interface HandView {
   readonly handNumber: number;
   readonly street: HandStreet;
   readonly buttonSeat: number;
-  readonly smallBlindSeat: number;
+  readonly smallBlindSeat: number | null;
   readonly bigBlindSeat: number;
   readonly board: readonly Card[];
   readonly players: readonly HandPlayerView[];
   readonly currentBet: number;
   readonly minRaise: number;
   readonly toAct: number | null;
-  /** All chips committed in the hand. */
+  /** All chips in the hand: bets plus dead blinds. */
   readonly pot: number;
   readonly awards: readonly PotAward[];
   readonly showdown: readonly ShowdownHand[];
+  /** Seats that mucked at showdown (cards stay hidden). */
+  readonly mucked: readonly number[];
 }
 
 export interface TableView {
@@ -69,7 +74,17 @@ export function viewFor(state: TableState, playerId: string): TableView {
   return {
     config: state.config,
     seats: state.seats.map((s, seat) =>
-      s ? { seat, playerId: s.playerId, stack: s.stack, status: s.status } : null,
+      s
+        ? {
+            seat,
+            playerId: s.playerId,
+            stack: s.stack,
+            status: s.status,
+            owesBigBlind: s.owesBigBlind,
+            owesSmallBlind: s.owesSmallBlind,
+            postBlindsToEnter: s.postBlindsToEnter,
+          }
+        : null,
     ),
     handNumber: state.handNumber,
     mySeat,
@@ -85,9 +100,10 @@ export function viewFor(state: TableState, playerId: string): TableView {
           currentBet: hand.currentBet,
           minRaise: hand.minRaise,
           toAct: hand.toAct,
-          pot: hand.players.reduce((sum, p) => sum + p.totalBet, 0),
+          pot: hand.players.reduce((sum, p) => sum + p.totalBet, hand.deadMoney),
           awards: hand.awards,
           showdown: hand.showdown,
+          mucked: hand.mucked,
           players: hand.players.map((p) => ({
             seat: p.seat,
             playerId: p.playerId,

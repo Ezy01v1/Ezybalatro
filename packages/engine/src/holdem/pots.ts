@@ -11,9 +11,10 @@ export interface Contribution {
  *
  * Each pot is a layer up to the smallest remaining contribution among players still in the hand;
  * folded players' chips fill the layers but they are never eligible. A top layer with a single
- * eligible seat is an uncalled bet: it is returned to that player when awarded.
+ * eligible seat is an uncalled bet: it is returned to that player when awarded. `deadMoney` (dead
+ * blinds, owned by nobody) goes to the main pot.
  */
-export function buildPots(contributions: readonly Contribution[]): Pot[] {
+export function buildPots(contributions: readonly Contribution[], deadMoney = 0): Pot[] {
   const remaining = new Map(contributions.map((c) => [c.seat, c.totalBet]));
   const folded = new Set(contributions.filter((c) => c.folded).map((c) => c.seat));
   const pots: Pot[] = [];
@@ -33,18 +34,23 @@ export function buildPots(contributions: readonly Contribution[]): Pot[] {
 
   // Folded chips above every live contribution (e.g. the blinds fold to a player who has not put
   // anything in yet) go to the top pot, or form one for the players still in the hand.
+  const stillIn = contributions
+    .filter((c) => !c.folded)
+    .map((c) => c.seat)
+    .sort((a, b) => a - b);
   const leftover = [...remaining.values()].reduce((sum, chips) => sum + chips, 0);
   if (leftover > 0) {
     const last = pots.pop();
-    const stillIn = contributions
-      .filter((c) => !c.folded)
-      .map((c) => c.seat)
-      .sort((a, b) => a - b);
     pots.push(
       last
         ? { ...last, amount: last.amount + leftover }
         : { amount: leftover, eligibleSeats: stillIn },
     );
+  }
+  if (deadMoney > 0) {
+    const main = pots[0];
+    if (main) pots[0] = { ...main, amount: main.amount + deadMoney };
+    else pots.push({ amount: deadMoney, eligibleSeats: stillIn });
   }
   return pots;
 }

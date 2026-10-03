@@ -29,6 +29,15 @@ export interface SeatState {
   /** Chips in front of the player. During a hand, chips already bet are not here but in `HandPlayer.totalBet`. */
   readonly stack: number;
   readonly status: SeatStatus;
+  /**
+   * Dead-button rules: a new player owes the big blind; a player who sat out while the big blind
+   * passed owes it too, and the small blind if it passed them. Owed blinds are paid by waiting for
+   * the big blind, or by posting them to enter earlier (live big blind + dead small blind).
+   */
+  readonly owesBigBlind: boolean;
+  readonly owesSmallBlind: boolean;
+  /** Post owed blinds to be dealt in as soon as allowed, instead of waiting for the big blind. */
+  readonly postBlindsToEnter: boolean;
 }
 
 /** `settled` covers both a showdown and a hand won because everyone else folded. */
@@ -71,9 +80,15 @@ export interface ShowdownHand {
 export interface HandState {
   readonly handNumber: number;
   readonly street: HandStreet;
+  /** May be a seat with nobody dealt in (dead button). */
   readonly buttonSeat: number;
-  readonly smallBlindSeat: number;
+  /** Null when the small blind is dead (nobody posts it this hand). */
+  readonly smallBlindSeat: number | null;
   readonly bigBlindSeat: number;
+  /** Chips in the pot that belong to no player's bet (dead small blinds posted to enter). Go to the main pot. */
+  readonly deadMoney: number;
+  /** Last player to bet or raise in the current round; shows first at showdown. */
+  readonly lastAggressorSeat: number | null;
   /** Undealt cards, top first. Secret. */
   readonly deck: readonly Card[];
   readonly board: readonly Card[];
@@ -89,16 +104,21 @@ export interface HandState {
   readonly startingStacks: readonly { readonly seat: number; readonly stack: number }[];
   /** Filled when the hand settles. */
   readonly awards: readonly PotAward[];
-  /** Hands shown at showdown. Empty if the hand ended by folds. */
+  /** Hands shown at showdown, in showing order. Empty if the hand ended by folds. */
   readonly showdown: readonly ShowdownHand[];
+  /** Players who reached showdown but mucked (lost without having to show). Their cards stay secret. */
+  readonly mucked: readonly number[];
 }
 
 export interface TableState {
   readonly config: TableConfig;
   /** Index = seat number. */
   readonly seats: readonly (SeatState | null)[];
-  /** Button of the last hand dealt, null before the first hand. */
+  /** Positions of the last hand dealt (null before the first hand); the next hand's positions derive from them. */
   readonly buttonSeat: number | null;
+  /** Small blind position, even if that blind was dead. */
+  readonly smallBlindPosition: number | null;
+  readonly bigBlindSeat: number | null;
   /** Number of hands dealt so far. */
   readonly handNumber: number;
   /** Current or last hand. A new hand can start when it is null, `settled` or `voided`. */
@@ -111,10 +131,12 @@ export type HoldemAction =
       readonly playerId: string;
       readonly seat: number;
       readonly buyIn: number;
+      /** Default false: wait for the big blind. */
+      readonly postBlindsToEnter?: boolean;
     }
   | { readonly type: 'leave'; readonly playerId: string }
   | { readonly type: 'sitOut'; readonly playerId: string }
-  | { readonly type: 'sitIn'; readonly playerId: string }
+  | { readonly type: 'sitIn'; readonly playerId: string; readonly postBlindsToEnter?: boolean }
   /**
    * Starts a hand: moves the button, posts blinds and deals. `deck` is the full 52-card deck already
    * shuffled by the caller (the server, with a CSPRNG), so the reducer stays pure and replayable.
@@ -176,14 +198,16 @@ export type HoldemEvent =
       readonly type: 'handStarted';
       readonly handNumber: number;
       readonly buttonSeat: number;
-      readonly smallBlindSeat: number;
+      readonly smallBlindSeat: number | null;
       readonly bigBlindSeat: number;
       readonly seats: readonly number[];
     }
+  | { readonly type: 'blindMissed'; readonly seat: number; readonly blind: 'small' | 'big' }
   | {
       readonly type: 'blindPosted';
       readonly seat: number;
-      readonly blind: 'small' | 'big';
+      /** `dead_small`: owed small blind posted to enter; it goes to the pot but is not part of the player's bet. */
+      readonly blind: 'small' | 'big' | 'dead_small';
       readonly amount: number;
       readonly allIn: boolean;
     }
@@ -204,7 +228,11 @@ export type HoldemEvent =
       readonly street: 'flop' | 'turn' | 'river';
       readonly cards: readonly Card[];
     }
-  | { readonly type: 'showdown'; readonly hands: readonly ShowdownHand[] }
+  | {
+      readonly type: 'showdown';
+      readonly hands: readonly ShowdownHand[];
+      readonly mucked: readonly number[];
+    }
   | ({ readonly type: 'potAwarded'; readonly potIndex: number } & PotAward)
   | {
       readonly type: 'handSettled';

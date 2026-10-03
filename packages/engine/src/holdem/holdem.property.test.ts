@@ -87,7 +87,22 @@ interface Tracker {
   handsPlayed: number;
   showdowns: number;
   sidePots: number;
+  deadButtons: number;
+  deadSmallBlinds: number;
+  enteredByPosting: number;
+  mucks: number;
 }
+
+const emptyTracker = (): Tracker => ({
+  expectedChips: 0,
+  handsPlayed: 0,
+  showdowns: 0,
+  sidePots: 0,
+  deadButtons: 0,
+  deadSmallBlinds: 0,
+  enteredByPosting: 0,
+  mucks: 0,
+});
 
 function checkInvariants(next: TableState, events: readonly HoldemEvent[], tracker: Tracker): void {
   for (const e of events) {
@@ -102,6 +117,18 @@ function checkInvariants(next: TableState, events: readonly HoldemEvent[], track
 
   const hand = next.hand;
   if (!hand) return;
+
+  // Dead-button positions are consistent.
+  if (events.some((e) => e.type === 'handStarted')) {
+    expect(hand.bigBlindSeat).not.toBe(hand.buttonSeat);
+    if (hand.smallBlindSeat !== null) expect(hand.smallBlindSeat).not.toBe(hand.bigBlindSeat);
+    expect(hand.players.some((p) => p.seat === hand.bigBlindSeat)).toBe(true);
+    if (!hand.players.some((p) => p.seat === hand.buttonSeat)) tracker.deadButtons++;
+    if (hand.smallBlindSeat === null) tracker.deadSmallBlinds++;
+    for (const e of events)
+      if (e.type === 'blindPosted' && e.seat !== hand.bigBlindSeat && e.blind !== 'small')
+        tracker.enteredByPosting++;
+  }
 
   // Invariant 2: every card exists once.
   const allCards = [...hand.players.flatMap((p) => p.holeCards), ...hand.board, ...hand.deck];
@@ -135,11 +162,16 @@ function checkInvariants(next: TableState, events: readonly HoldemEvent[], track
 
   if (events.some((e) => e.type === 'handSettled')) {
     tracker.handsPlayed++;
-    const pot = hand.players.reduce((sum, p) => sum + p.totalBet, 0);
+    const pot = hand.players.reduce((sum, p) => sum + p.totalBet, hand.deadMoney);
     expect(hand.awards.reduce((sum, a) => sum + a.amount, 0)).toBe(pot);
     for (const award of hand.awards)
       expect(award.winners.reduce((sum, w) => sum + w.amount, 0)).toBe(award.amount);
     if (hand.showdown.length > 0) tracker.showdowns++;
+    tracker.mucks += hand.mucked.length;
+    // Every winner of a contested pot showed; mucked hands won nothing contested.
+    for (const award of hand.awards.filter((a) => a.eligibleSeats.length > 1)) {
+      for (const w of award.winners) expect(shownSeats.has(w.seat)).toBe(true);
+    }
     if (hand.awards.filter((a) => a.eligibleSeats.length > 1).length > 1) tracker.sidePots++;
 
     // The reducer's winners are exactly the best hands by compareHands among each pot's eligible players.
@@ -190,11 +222,19 @@ function simulate(
     for (const [seat, s] of state.seats.entries()) {
       if (!s) {
         if (chance(rng, 15))
-          step({ type: 'sit', playerId: `p${nextPlayer++}`, seat, buyIn: randInt(rng, 1, 300) });
-      } else if (s.stack === 0 || chance(rng, 5)) {
+          step({
+            type: 'sit',
+            playerId: `p${nextPlayer++}`,
+            seat,
+            buyIn: randInt(rng, 1, 300),
+            postBlindsToEnter: chance(rng, 50),
+          });
+      } else if (s.stack === 0 || chance(rng, 4)) {
         step({ type: 'leave', playerId: s.playerId });
-      } else if (s.status === 'sitting_out' && chance(rng, 50)) {
-        step({ type: 'sitIn', playerId: s.playerId });
+      } else if (s.status === 'sitting_out' && chance(rng, 35)) {
+        step({ type: 'sitIn', playerId: s.playerId, postBlindsToEnter: chance(rng, 50) });
+      } else if (s.status === 'seated' && chance(rng, 6)) {
+        step({ type: 'sitOut', playerId: s.playerId });
       }
     }
     if (!nextHandPositions(state)) continue;
@@ -216,16 +256,20 @@ function simulate(
 }
 
 describe("Hold'em properties (random legal play)", () => {
-  const totals: Tracker = { expectedChips: 0, handsPlayed: 0, showdowns: 0, sidePots: 0 };
+  const totals = emptyTracker();
 
   afterAll(() => {
+    const counts = { ...totals, expectedChips: undefined };
+    console.info(`Hold'em simulation: ${JSON.stringify(counts)}`);
     // Make sure the simulation exercised the interesting paths, not just folds.
     expect(totals.handsPlayed).toBeGreaterThan(3000);
     expect(totals.showdowns).toBeGreaterThan(300);
     expect(totals.sidePots).toBeGreaterThan(50);
-    console.info(
-      `Hold'em simulation: ${totals.handsPlayed} hands, ${totals.showdowns} showdowns, ${totals.sidePots} with side pots`,
-    );
+    expect(totals.deadButtons).toBeGreaterThan(20);
+    expect(totals.deadSmallBlinds).toBeGreaterThan(20);
+    expect(totals.enteredByPosting).toBeGreaterThan(20);
+    // Random play goes all-in a lot (everyone shows then), so mucks are rarer; unit tests cover them.
+    expect(totals.mucks).toBeGreaterThan(5);
   });
 
   it('conserves chips, never leaks private cards, and settles pots like compareHands', () => {
@@ -237,11 +281,9 @@ describe("Hold'em properties (random legal play)", () => {
           maxLength: 6,
         }),
         (seed, stacks) => {
-          const tracker: Tracker = { expectedChips: 0, handsPlayed: 0, showdowns: 0, sidePots: 0 };
+          const tracker = emptyTracker();
           simulate(seed, stacks, 25, tracker);
-          totals.handsPlayed += tracker.handsPlayed;
-          totals.showdowns += tracker.showdowns;
-          totals.sidePots += tracker.sidePots;
+          for (const key of Object.keys(totals) as (keyof Tracker)[]) totals[key] += tracker[key];
         },
       ),
       { numRuns: 200, examples: [['', [2, 3, 13, 13]]] },

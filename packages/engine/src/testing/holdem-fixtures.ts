@@ -80,7 +80,7 @@ export function totalChips(state: TableState): number {
   const stacks = state.seats.reduce((sum, s) => sum + (s?.stack ?? 0), 0);
   const committed =
     state.hand && state.hand.street !== 'settled' && state.hand.street !== 'voided'
-      ? state.hand.players.reduce((sum, p) => sum + p.totalBet, 0)
+      ? state.hand.players.reduce((sum, p) => sum + p.totalBet, state.hand.deadMoney)
       : 0;
   return stacks + committed;
 }

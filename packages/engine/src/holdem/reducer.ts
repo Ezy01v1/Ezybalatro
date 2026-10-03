@@ -35,6 +35,8 @@ interface Draft {
   config: TableConfig;
   seats: (DraftSeat | null)[];
   buttonSeat: number | null;
+  smallBlindPosition: number | null;
+  bigBlindSeat: number | null;
   handNumber: number;
   hand: DraftHand | null;
   events: HoldemEvent[];
@@ -58,6 +60,8 @@ export function createTable(config: TableConfig): TableState {
     config,
     seats: new Array<null>(maxSeats).fill(null),
     buttonSeat: null,
+    smallBlindPosition: null,
+    bigBlindSeat: null,
     handNumber: 0,
     hand: null,
   };
@@ -67,13 +71,13 @@ export function createTable(config: TableConfig): TableState {
 export function holdemReducer(state: TableState, action: HoldemAction): HoldemResult {
   switch (action.type) {
     case 'sit':
-      return sit(state, action.playerId, action.seat, action.buyIn);
+      return sit(state, action.playerId, action.seat, action.buyIn, action.postBlindsToEnter);
     case 'leave':
       return leave(state, action.playerId);
     case 'sitOut':
       return sitOut(state, action.playerId);
     case 'sitIn':
-      return sitIn(state, action.playerId);
+      return sitIn(state, action.playerId, action.postBlindsToEnter);
     case 'postBlinds':
       return startHand(state, action.deck);
     case 'voidHand':
@@ -93,7 +97,13 @@ export function holdemReducer(state: TableState, action: HoldemAction): HoldemRe
 
 // ---------------------------------------------------------------- seats
 
-function sit(state: TableState, playerId: string, seat: number, buyIn: number): HoldemResult {
+function sit(
+  state: TableState,
+  playerId: string,
+  seat: number,
+  buyIn: number,
+  postBlindsToEnter = false,
+): HoldemResult {
   const { maxSeats, minBuyIn, maxBuyIn } = state.config;
   if (!Number.isInteger(seat) || seat < 0 || seat >= maxSeats)
     return fail('INVALID_SEAT', `Seat must be 0..${maxSeats - 1}`);
@@ -104,7 +114,15 @@ function sit(state: TableState, playerId: string, seat: number, buyIn: number): 
     return fail('INVALID_BUY_IN', `Buy-in must be an integer in [${minBuyIn}, ${maxBuyIn}]`);
   }
   const d = toDraft(state);
-  d.seats[seat] = { playerId, stack: buyIn, status: 'seated' };
+  // Once the table has dealt, a new player owes the big blind (so changing seats never skips it).
+  d.seats[seat] = {
+    playerId,
+    stack: buyIn,
+    status: 'seated',
+    owesBigBlind: state.handNumber > 0,
+    owesSmallBlind: false,
+    postBlindsToEnter,
+  };
   d.events.push({ type: 'playerSat', seat, playerId, stack: buyIn });
   return done(d);
 }
@@ -161,7 +179,7 @@ function sitOut(state: TableState, playerId: string): HoldemResult {
   return done(d);
 }
 
-function sitIn(state: TableState, playerId: string): HoldemResult {
+function sitIn(state: TableState, playerId: string, postBlindsToEnter?: boolean): HoldemResult {
   const seat = seatOf(state, playerId);
   if (seat === -1) return fail('NOT_SEATED', 'Player is not seated');
   const current = state.seats[seat]!;
@@ -169,6 +187,7 @@ function sitIn(state: TableState, playerId: string): HoldemResult {
   if (current.stack === 0) return fail('INVALID_ACTION', 'Cannot sit in with an empty stack');
   const d = toDraft(state);
   d.seats[seat]!.status = 'seated';
+  if (postBlindsToEnter !== undefined) d.seats[seat]!.postBlindsToEnter = postBlindsToEnter;
   d.events.push({ type: 'playerSatIn', seat, playerId });
   return done(d);
 }
@@ -187,6 +206,12 @@ function startHand(state: TableState, deck: readonly Card[]): HoldemResult {
   const dealtIn = [...dealOrder].sort((a, b) => a - b);
 
   const d = toDraft(state);
+  for (const { seat, blind } of positions.missedBlinds) {
+    const missedBy = d.seats[seat]!;
+    if (blind === 'big') missedBy.owesBigBlind = true;
+    else missedBy.owesSmallBlind = true;
+    d.events.push({ type: 'blindMissed', seat, blind });
+  }
   const remaining = [...deck];
   const hole = new Map<number, Card[]>(dealtIn.map((seat) => [seat, []]));
   for (let round = 0; round < 2; round++)
@@ -194,12 +219,16 @@ function startHand(state: TableState, deck: readonly Card[]): HoldemResult {
 
   d.handNumber += 1;
   d.buttonSeat = buttonSeat;
-  d.hand = {
+  d.smallBlindPosition = positions.smallBlindPosition;
+  d.bigBlindSeat = bigBlindSeat;
+  const hand: DraftHand = {
     handNumber: d.handNumber,
     street: 'preflop',
     buttonSeat,
     smallBlindSeat,
     bigBlindSeat,
+    deadMoney: 0,
+    lastAggressorSeat: null,
     deck: remaining,
     board: [],
     players: dealtIn.map((seat) => ({
@@ -219,7 +248,9 @@ function startHand(state: TableState, deck: readonly Card[]): HoldemResult {
     startingStacks: dealtIn.map((seat) => ({ seat, stack: d.seats[seat]!.stack })),
     awards: [],
     showdown: [],
+    mucked: [],
   };
+  d.hand = hand;
   d.events.push({
     type: 'handStarted',
     handNumber: d.handNumber,
@@ -228,13 +259,35 @@ function startHand(state: TableState, deck: readonly Card[]): HoldemResult {
     bigBlindSeat,
     seats: dealtIn,
   });
-  for (const [seat, blind, size] of [
-    [smallBlindSeat, 'small', smallBlind],
-    [bigBlindSeat, 'big', bigBlind],
-  ] as const) {
+  const post = (seat: number, blind: 'small' | 'big', size: number) => {
     const player = playerAt(d, seat);
     const amount = commit(d, player, size);
     d.events.push({ type: 'blindPosted', seat, blind, amount, allIn: player.allIn });
+  };
+  if (smallBlindSeat !== null) post(smallBlindSeat, 'small', smallBlind);
+  post(bigBlindSeat, 'big', bigBlind);
+  // Owed blinds posted to enter: the big blind is live (part of the bet), the small blind is dead.
+  for (const entry of positions.entryPosts) {
+    if (entry.bigBlind) post(entry.seat, 'big', bigBlind);
+    if (entry.deadSmallBlind) {
+      const seat = d.seats[entry.seat]!;
+      const player = playerAt(d, entry.seat);
+      const amount = Math.min(smallBlind, seat.stack);
+      seat.stack -= amount;
+      hand.deadMoney += amount;
+      if (seat.stack === 0) player.allIn = true;
+      d.events.push({
+        type: 'blindPosted',
+        seat: entry.seat,
+        blind: 'dead_small',
+        amount,
+        allIn: player.allIn,
+      });
+    }
+  }
+  for (const seat of positions.clearedSeats) {
+    d.seats[seat]!.owesBigBlind = false;
+    d.seats[seat]!.owesSmallBlind = false;
   }
   proceed(d, bigBlindSeat + 1);
   return done(d);
@@ -316,6 +369,7 @@ function bettingAction(
         );
       }
       const increment = amountTo - hand.currentBet;
+      hand.lastAggressorSeat = player.seat;
       // Only a full bet/raise sets a new minimum raise; an incomplete all-in leaves it unchanged.
       if (increment >= hand.minRaise) hand.minRaise = increment;
       hand.currentBet = amountTo;
@@ -391,6 +445,7 @@ function dealStreet(d: Draft): void {
   hand.street = street;
   hand.currentBet = 0;
   hand.minRaise = d.config.bigBlind;
+  hand.lastAggressorSeat = null;
   for (const p of hand.players) {
     p.streetBet = 0;
     p.hasActed = false;
@@ -399,10 +454,16 @@ function dealStreet(d: Draft): void {
   d.events.push({ type: 'streetDealt', street, cards });
 }
 
+/**
+ * Awards every pot and decides who shows. If anyone still in is all-in, every hand is shown (TDA
+ * all-in exposure). Otherwise the last aggressor of the final round shows first (the first player
+ * left of the button if nobody bet), and the others show only to claim a pot: losers muck.
+ */
 function settle(d: Draft): void {
   const hand = d.hand!;
+  const { maxSeats } = d.config;
   const live = hand.players.filter((p) => !p.folded);
-  const showdown: ShowdownHand[] =
+  const evaluated: ShowdownHand[] =
     live.length >= 2
       ? live.map((p) => {
           const best = bestHand([...p.holeCards, ...hand.board]);
@@ -415,20 +476,37 @@ function settle(d: Draft): void {
           };
         })
       : [];
-  if (showdown.length > 0) d.events.push({ type: 'showdown', hands: showdown });
 
-  const awards: PotAward[] = buildPots(hand.players).map((pot) => {
+  const awards: PotAward[] = buildPots(hand.players, hand.deadMoney).map((pot) => {
     let winnerSeats = pot.eligibleSeats;
     if (winnerSeats.length > 1) {
-      const contenders = showdown.filter((h) => pot.eligibleSeats.includes(h.seat));
+      const contenders = evaluated.filter((h) => pot.eligibleSeats.includes(h.seat));
       const top = contenders.reduce((a, b) => (compareHands(a, b) >= 0 ? a : b));
       winnerSeats = contenders.filter((h) => compareHands(h, top) === 0).map((h) => h.seat);
     }
-    return {
-      ...pot,
-      winners: splitPot(pot.amount, winnerSeats, hand.buttonSeat, d.config.maxSeats),
-    };
+    return { ...pot, winners: splitPot(pot.amount, winnerSeats, hand.buttonSeat, maxSeats) };
   });
+
+  let showdown: ShowdownHand[] = [];
+  let mucked: number[] = [];
+  if (evaluated.length > 0) {
+    const isLive = (seat: number) => live.some((p) => p.seat === seat);
+    const aggressor = hand.lastAggressorSeat;
+    const firstToShow =
+      aggressor !== null && isLive(aggressor)
+        ? aggressor
+        : findSeatFrom(hand.buttonSeat + 1, maxSeats, isLive)!;
+    const showingOrder = (seat: number) => (seat - firstToShow + maxSeats) % maxSeats;
+    const potWinners = new Set(
+      awards.filter((a) => a.eligibleSeats.length > 1).flatMap((a) => a.winners.map((w) => w.seat)),
+    );
+    const showAll = live.some((p) => p.allIn);
+    const ordered = [...evaluated].sort((a, b) => showingOrder(a.seat) - showingOrder(b.seat));
+    showdown = ordered.filter((h) => showAll || h.seat === firstToShow || potWinners.has(h.seat));
+    mucked = ordered.filter((h) => !showdown.includes(h)).map((h) => h.seat);
+    d.events.push({ type: 'showdown', hands: showdown, mucked });
+  }
+
   awards.forEach((award, potIndex) => {
     for (const w of award.winners) d.seats[w.seat]!.stack += w.amount;
     d.events.push({ type: 'potAwarded', potIndex, ...award });
@@ -438,6 +516,7 @@ function settle(d: Draft): void {
   hand.toAct = null;
   hand.awards = awards;
   hand.showdown = showdown;
+  hand.mucked = mucked;
   d.events.push({
     type: 'handSettled',
     handNumber: hand.handNumber,
@@ -485,6 +564,8 @@ function toDraft(state: TableState, events: readonly HoldemEvent[] = []): Draft 
     config: state.config,
     seats: state.seats.map((s) => (s ? { ...s } : null)),
     buttonSeat: state.buttonSeat,
+    smallBlindPosition: state.smallBlindPosition,
+    bigBlindSeat: state.bigBlindSeat,
     handNumber: state.handNumber,
     hand: hand
       ? {
@@ -492,6 +573,7 @@ function toDraft(state: TableState, events: readonly HoldemEvent[] = []): Draft 
           deck: [...hand.deck],
           board: [...hand.board],
           players: hand.players.map((p) => ({ ...p })),
+          mucked: [...hand.mucked],
         }
       : null,
     events: [...events],
