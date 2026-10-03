@@ -1,0 +1,33 @@
+{
+  "name": "naipes",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.34.6",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build:packages": "pnpm -r --filter \"./packages/*\" build",
+    "dev:mobile": "pnpm --filter @naipes/mobile start",
+    "dev:server": "pnpm build:packages && pnpm --filter @naipes/server start:dev",
+    "build": "pnpm build:packages && pnpm --filter @naipes/server build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm build:packages && pnpm -r typecheck",
+    "test": "pnpm build:packages && pnpm -r test",
+    "test:engine": "pnpm --filter @naipes/engine test",
+    "test:server": "pnpm build:packages && pnpm --filter @naipes/server test",
+    "test:mobile": "pnpm build:packages && pnpm --filter @naipes/mobile test",
+    "export:mobile": "pnpm --filter @naipes/mobile export",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.9",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
+  }
+}

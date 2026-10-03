@@ -1,0 +1,8 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Native postinstall scripts not needed for dev/CI (file watcher, eslint resolver binary).
+ignoredBuiltDependencies:
+  - '@parcel/watcher'
+  - unrs-resolver
