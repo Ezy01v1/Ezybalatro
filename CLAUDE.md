@@ -49,7 +49,7 @@ docs/
 Todos se corren desde la raíz. Requisitos: Node 24 (`.nvmrc`) y pnpm 10 (`packageManager` en `package.json`; si Corepack no tiene permisos, `npm i -g pnpm@10`).
 
 - Instalar: `pnpm install`
-- Dev móvil: `pnpm dev:mobile` (Expo; escanea el QR con Expo Go)
+- Dev móvil: `pnpm dev:mobile` (Expo; escanea el QR desde Expo Go). Por Wi‑Fi el Firewall de Windows bloquea el puerto 8081; lo que funciona es el cable USB: `adb reverse tcp:8081 tcp:8081` y luego `adb shell am start -a android.intent.action.VIEW -d exp://127.0.0.1:8081 host.exp.exponent` (adb en `%LOCALAPPDATA%\Android\Sdk\platform-tools`). Dispositivo de prueba: Samsung Galaxy A56.
 - Dev servidor: `pnpm dev:server` (copia `apps/server/.env.example` a `apps/server/.env`)
 - Lint: `pnpm lint`
 - Typecheck: `pnpm typecheck` (compila antes `packages/*`)
@@ -159,7 +159,6 @@ Notas del esqueleto:
 - **En curso:** —
 - **Siguiente:** Fase 1 (engine): cartas, PRNG con semilla, evaluador de manos, scoring del roguelike.
 - **Deuda técnica conocida:**
-  - Probar la app en un teléfono real con Expo Go (en la Fase 0 solo se verificó que el bundle compila).
   - Los tests e2e del server tardan ~30 s (probablemente por el cierre del socket); revisar.
   - Swagger/OpenAPI todavía no está montado (se agrega con el primer endpoint REST real).
   - Logs estructurados (pino + requestId) y `helmet` pendientes para antes de exponer el server.
