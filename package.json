@@ -15,6 +15,7 @@
     "typecheck": "pnpm build:packages && pnpm -r typecheck",
     "test": "pnpm build:packages && pnpm -r test",
     "test:engine": "pnpm --filter @naipes/engine test",
+    "sim:balance": "pnpm build:packages && node packages/engine/scripts/simulate-balance.mjs",
     "test:server": "pnpm build:packages && pnpm --filter @naipes/server test",
     "test:mobile": "pnpm build:packages && pnpm --filter @naipes/mobile test",
     "export:mobile": "pnpm --filter @naipes/mobile export",

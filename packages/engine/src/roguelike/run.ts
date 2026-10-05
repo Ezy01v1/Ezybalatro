@@ -1,11 +1,13 @@
-import { createStandardDeck, shuffleDeck } from '../cards';
+import { createStandardDeck, shuffleDeck, SUITS } from '../cards';
 import { HAND_CATEGORIES, type HandCategory } from '../hands/hand-category';
+import { evaluatePlayedHand } from '../hands/played-hand';
 import { nextInt } from '../rng';
 import { SeededRng, type SeededRngState } from '../seeded-rng';
 import { DEFAULT_CONTENT } from './content';
-import { scoreHand, type ScoreStep } from './scoring';
+import { handBase, scoreHand, type ScoreStep } from './scoring';
 import type {
   BlindKind,
+  BossDefinition,
   JokerDefinition,
   JokerEffect,
   JokerInstance,
@@ -31,13 +33,21 @@ export interface RunConfig {
   readonly jokerSlots: number;
   readonly startingMoney: number;
   readonly shopJokerOffers: number;
-  readonly levelUpPrice: number;
+  /** Hand level-up consumables offered per shop visit (distinct hand types). */
+  readonly shopConsumableOffers: number;
+  readonly consumablePrice: number;
+  /** First reroll of a shop visit costs this much; each further reroll costs `rerollCostStep` more. */
+  readonly rerollBaseCost: number;
+  readonly rerollCostStep: number;
 }
+
+/** Bumped when the saved shape of `RunState` changes; older saves are discarded. */
+export const RUN_STATE_VERSION = 1;
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   antes: 8,
-  anteTargets: [250, 700, 1800, 4500, 10000, 19000, 32000, 48000],
-  blindTargetMultiplier: { small: 1, big: 1.5, boss: 2 },
+  anteTargets: [250, 650, 1500, 3500, 7000, 12500, 20000, 32000],
+  blindTargetMultiplier: { small: 1, big: 1.4, boss: 1.8 },
   blindReward: { small: 3, big: 4, boss: 5 },
   moneyPerHandLeft: 1,
   interestStep: 5,
@@ -49,7 +59,10 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   jokerSlots: 5,
   startingMoney: 4,
   shopJokerOffers: 2,
-  levelUpPrice: 3,
+  shopConsumableOffers: 2,
+  consumablePrice: 3,
+  rerollBaseCost: 3,
+  rerollCostStep: 1,
 };
 
 export type ShopOffer =
@@ -69,6 +82,7 @@ export type ShopOffer =
 export type RunStatus = 'in_progress' | 'won' | 'lost' | 'abandoned';
 
 export interface RunState {
+  readonly version: number;
   readonly seed: string;
   readonly config: RunConfig;
   readonly status: RunStatus;
@@ -84,6 +98,8 @@ export interface RunState {
   readonly deck: readonly RunCard[];
   readonly drawPile: readonly RunCard[];
   readonly hand: readonly RunCard[];
+  /** Cards in hand for the current blind (the boss can reduce it). */
+  readonly handSize: number;
   readonly handsLeft: number;
   readonly discardsLeft: number;
   readonly money: number;
@@ -92,6 +108,7 @@ export interface RunState {
   readonly handsPlayed: number;
   readonly bestHandScore: number;
   readonly shop: readonly ShopOffer[];
+  readonly rerollCost: number;
   /** Independent PRNG sub-streams, so buying in the shop never changes the cards dealt later. */
   readonly rng: {
     readonly deck: SeededRngState;
@@ -108,7 +125,10 @@ export type RunAction =
   | { readonly type: 'buy'; readonly offerIndex: number }
   | { readonly type: 'sellJoker'; readonly instanceId: string }
   | { readonly type: 'moveJoker'; readonly from: number; readonly to: number }
+  | { readonly type: 'reroll' }
   | { readonly type: 'leaveShop' }
+  /** Reorders the hand (the order matters for held-card effects). */
+  | { readonly type: 'sortHand'; readonly by: 'rank' | 'suit' }
   | { readonly type: 'abandon' };
 
 export type RunErrorCode =
@@ -156,6 +176,12 @@ export type RunEvent =
       readonly money: number;
     }
   | { readonly type: 'shopOpened'; readonly offers: readonly ShopOffer[] }
+  | {
+      readonly type: 'shopRerolled';
+      readonly offers: readonly ShopOffer[];
+      readonly money: number;
+      readonly nextCost: number;
+    }
   | { readonly type: 'bought'; readonly offerIndex: number; readonly money: number }
   | { readonly type: 'jokerSold'; readonly instanceId: string; readonly money: number }
   | { readonly type: 'runWon' }
@@ -200,6 +226,7 @@ export function createRun(
     throw new RangeError('anteTargets must have one entry per ante');
   const events: RunEvent[] = [];
   const d: Draft = {
+    version: RUN_STATE_VERSION,
     seed,
     config,
     status: 'in_progress',
@@ -212,6 +239,7 @@ export function createRun(
     deck: createStandardDeck(),
     drawPile: [],
     hand: [],
+    handSize: config.handSize,
     handsLeft: 0,
     discardsLeft: 0,
     money: config.startingMoney,
@@ -223,6 +251,7 @@ export function createRun(
     handsPlayed: 0,
     bestHandScore: 0,
     shop: [],
+    rerollCost: config.rerollBaseCost,
     rng: {
       deck: SeededRng.fromSeed(seed, 'deck').getState(),
       shop: SeededRng.fromSeed(seed, 'shop').getState(),
@@ -290,6 +319,12 @@ function apply(
       d.jokers.splice(to, 0, moved!);
       return null;
     }
+    case 'reroll':
+      return reroll(d, content, events);
+    case 'sortHand':
+      if (d.phase !== 'blind') return err('INVALID_PHASE', 'Not playing a blind');
+      d.hand = sortCards(d.hand, action.by);
+      return null;
     case 'leaveShop':
       if (d.phase !== 'shop') return err('INVALID_PHASE', 'Not in the shop');
       d.shop = [];
@@ -320,7 +355,7 @@ function play(
     );
 
   const held = d.hand.filter((c) => !played.includes(c));
-  const boss = d.blind === 'boss' ? content.bosses.find((b) => b.id === d.bossId) : undefined;
+  const boss = currentBoss(d, content);
   d.handsPlayed += 1;
   const result = scoreHand(
     {
@@ -329,8 +364,10 @@ function play(
       jokers: d.jokers,
       handLevels: d.handLevels,
       handsPlayed: d.handsPlayed,
+      handsLeft: d.handsLeft - 1,
+      discardsLeft: d.discardsLeft,
       money: d.money,
-      ...(boss?.debuffSuit ? { isDebuffed: (card: RunCard) => card.suit === boss.debuffSuit } : {}),
+      ...(boss ? { isDebuffed: debuffRule(boss) } : {}),
     },
     content,
   );
@@ -423,12 +460,13 @@ function winRound(d: Draft, content: RunContent, events: RunEvent[]): void {
 
 function startBlind(d: Draft, content: RunContent, events: RunEvent[]): void {
   const { config } = d;
-  const boss = d.blind === 'boss' ? content.bosses.find((b) => b.id === d.bossId) : undefined;
   d.phase = 'blind';
-  d.target = Math.floor(config.anteTargets[d.ante - 1]! * config.blindTargetMultiplier[d.blind]);
+  const boss = currentBoss(d, content);
+  d.target = roundTarget(config.anteTargets[d.ante - 1]! * config.blindTargetMultiplier[d.blind]);
   d.roundScore = 0;
   d.handsLeft = Math.max(1, config.hands + (boss?.handsDelta ?? 0));
   d.discardsLeft = Math.max(0, config.discards + (boss?.discardsDelta ?? 0));
+  d.handSize = Math.max(1, config.handSize + (boss?.handSizeDelta ?? 0));
   const rng = new SeededRng(d.rng.deck);
   d.drawPile = shuffleDeck(rng, d.deck);
   d.rng.deck = rng.getState();
@@ -450,7 +488,7 @@ function pickBoss(d: Draft, content: RunContent): void {
 }
 
 function draw(d: Draft, events: RunEvent[]): void {
-  const drawn = d.drawPile.splice(0, Math.max(0, d.config.handSize - d.hand.length));
+  const drawn = d.drawPile.splice(0, Math.max(0, d.handSize - d.hand.length));
   d.hand.push(...drawn);
   if (drawn.length > 0) events.push({ type: 'cardsDrawn', cardIds: drawn.map((c) => c.id) });
 }
@@ -469,7 +507,8 @@ function pickFromHand(d: Draft, cardIds: readonly string[]): RunCard[] | null {
 
 // ---------------------------------------------------------------- shop
 
-function openShop(d: Draft, content: RunContent, events: RunEvent[]): void {
+/** Random jokers (not owned, no repeats) and level-up consumables (distinct hand types). */
+function rollOffers(d: Draft, content: RunContent): ShopOffer[] {
   const rng = new SeededRng(d.rng.shop);
   const owned = new Set(d.jokers.map((j) => j.jokerId));
   const pool = content.jokers.filter((j) => !owned.has(j.id));
@@ -478,10 +517,24 @@ function openShop(d: Draft, content: RunContent, events: RunEvent[]): void {
     const [joker] = pool.splice(nextInt(rng, pool.length), 1);
     offers.push({ kind: 'joker', jokerId: joker!.id, price: joker!.cost, sold: false });
   }
-  const handType = HAND_CATEGORIES[nextInt(rng, HAND_CATEGORIES.length)]!;
-  offers.push({ kind: 'levelUp', handType, price: d.config.levelUpPrice, sold: false });
+  const handTypes = [...HAND_CATEGORIES];
+  for (let i = 0; i < d.config.shopConsumableOffers && handTypes.length > 0; i++) {
+    const [handType] = handTypes.splice(nextInt(rng, handTypes.length), 1);
+    offers.push({
+      kind: 'levelUp',
+      handType: handType!,
+      price: d.config.consumablePrice,
+      sold: false,
+    });
+  }
   d.rng.shop = rng.getState();
+  return offers;
+}
+
+function openShop(d: Draft, content: RunContent, events: RunEvent[]): void {
+  const offers = rollOffers(d, content);
   d.shop = offers;
+  d.rerollCost = d.config.rerollBaseCost;
   d.phase = 'shop';
   events.push({ type: 'shopOpened', offers });
   runRunHook(d, content, events, 'onShopEnter', (def, self) =>
@@ -517,6 +570,16 @@ function buy(
   return null;
 }
 
+function reroll(d: Draft, content: RunContent, events: RunEvent[]): RunError | null {
+  if (d.phase !== 'shop') return err('INVALID_PHASE', 'Not in the shop');
+  if (d.money < d.rerollCost) return err('NOT_ENOUGH_MONEY', 'Not enough money');
+  d.money -= d.rerollCost;
+  d.rerollCost += d.config.rerollCostStep;
+  d.shop = rollOffers(d, content);
+  events.push({ type: 'shopRerolled', offers: d.shop, money: d.money, nextCost: d.rerollCost });
+  return null;
+}
+
 function sellJoker(
   d: Draft,
   instanceId: string,
@@ -526,14 +589,87 @@ function sellJoker(
   if (d.phase !== 'shop') return err('INVALID_PHASE', 'Jokers are sold in the shop');
   const index = d.jokers.findIndex((j) => j.instanceId === instanceId);
   if (index === -1) return err('INVALID_JOKER', 'No such joker');
-  const cost = content.jokers.find((j) => j.id === d.jokers[index]!.jokerId)?.cost ?? 2;
+  const value = jokerSellValue(d.jokers[index]!, content);
   d.jokers.splice(index, 1);
-  d.money += Math.max(1, Math.floor(cost / 2));
+  d.money += value;
   events.push({ type: 'jokerSold', instanceId, money: d.money });
   return null;
 }
 
 // ---------------------------------------------------------------- helpers
+
+/** Money you get for selling a joker: half its price, rounded down, at least $1. */
+export function jokerSellValue(
+  joker: JokerInstance,
+  content: RunContent = DEFAULT_CONTENT,
+): number {
+  const cost = content.jokers.find((j) => j.id === joker.jokerId)?.cost ?? 2;
+  return Math.max(1, Math.floor(cost / 2));
+}
+
+function currentBoss(d: Draft | RunState, content: RunContent): BossDefinition | undefined {
+  return d.blind === 'boss' && d.phase !== 'shop'
+    ? content.bosses.find((b) => b.id === d.bossId)
+    : undefined;
+}
+
+function debuffRule(boss: BossDefinition): (card: RunCard) => boolean {
+  return (card) =>
+    card.suit === boss.debuffSuit || (boss.debuffRanks?.includes(card.rank) ?? false);
+}
+
+/** Is this card debuffed by the current boss? (For the UI: debuffed cards are marked.) */
+export function isCardDebuffed(
+  state: RunState,
+  card: RunCard,
+  content: RunContent = DEFAULT_CONTENT,
+): boolean {
+  const boss = currentBoss(state, content);
+  return boss ? debuffRule(boss)(card) : false;
+}
+
+/** Rank: high to low, ties by suit. Suit: ♠ ♥ ♦ ♣, then high to low. */
+function sortCards(cards: readonly RunCard[], by: 'rank' | 'suit'): RunCard[] {
+  const suitIndex = (c: RunCard) => SUITS.indexOf(c.suit);
+  return [...cards].sort((a, b) =>
+    by === 'rank'
+      ? b.rank - a.rank || suitIndex(a) - suitIndex(b)
+      : suitIndex(a) - suitIndex(b) || b.rank - a.rank,
+  );
+}
+
+export interface PlayPreview {
+  readonly handType: HandCategory;
+  readonly level: number;
+  /** Base chips and mult of the hand type at its level (cards and jokers add more when played). */
+  readonly chips: number;
+  readonly mult: number;
+  readonly scoringIds: readonly string[];
+}
+
+/** What playing `cardIds` would be, before jokers: for the selection preview. Null if not playable. */
+export function previewPlay(
+  state: RunState,
+  cardIds: readonly string[],
+  content: RunContent = DEFAULT_CONTENT,
+): PlayPreview | null {
+  if (
+    state.phase !== 'blind' ||
+    cardIds.length < 1 ||
+    cardIds.length > state.config.maxCardsPerAction
+  )
+    return null;
+  const cards = cardIds.map((id) => state.hand.find((c) => c.id === id));
+  if (!cards.every((c) => c !== undefined) || new Set(cardIds).size !== cardIds.length) return null;
+  const { type, scoringCards } = evaluatePlayedHand(cards as RunCard[]);
+  const level = state.handLevels[type];
+  return {
+    handType: type,
+    level,
+    ...handBase(type, level, content),
+    scoringIds: scoringCards.map((c) => c.id),
+  };
+}
 
 /** Runs a run-level hook on every joker, left to right, applying money and state. */
 function runRunHook(
@@ -571,4 +707,10 @@ function err(code: RunErrorCode, message: string): RunError {
 
 function fail(code: RunErrorCode, message: string): RunResult {
   return { ok: false, error: { code, message } };
+}
+
+/** Readable targets: exact below 100, multiples of 10 below 1.000, of 50 below 10.000, of 100 above. */
+function roundTarget(value: number): number {
+  const step = value < 100 ? 1 : value < 1000 ? 10 : value < 10000 ? 50 : 100;
+  return Math.max(step, Math.round(value / step) * step);
 }

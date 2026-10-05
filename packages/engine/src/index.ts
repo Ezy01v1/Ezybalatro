@@ -39,7 +39,7 @@ export {
   JOKERS,
 } from './roguelike/content';
 export type { ScoreInput, ScoreResult, ScoreSource, ScoreStep } from './roguelike/scoring';
-export { scoreHand } from './roguelike/scoring';
+export { handBase, scoreHand } from './roguelike/scoring';
 export type {
   RunAction,
   RunConfig,
@@ -51,6 +51,16 @@ export type {
   RunStatus,
   ShopOffer,
 } from './roguelike/run';
-export { DEFAULT_RUN_CONFIG, createRun, replayRun, runReducer } from './roguelike/run';
+export type { PlayPreview } from './roguelike/run';
+export {
+  DEFAULT_RUN_CONFIG,
+  RUN_STATE_VERSION,
+  createRun,
+  isCardDebuffed,
+  jokerSellValue,
+  previewPlay,
+  replayRun,
+  runReducer,
+} from './roguelike/run';
 
 export const ENGINE_VERSION = '0.0.0';

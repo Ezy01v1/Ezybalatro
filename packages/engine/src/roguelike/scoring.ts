@@ -38,6 +38,9 @@ export interface ScoreInput {
   readonly handLevels: Readonly<Record<HandCategory, number>>;
   /** Hands played in the run, this one included. */
   readonly handsPlayed: number;
+  /** Hands left in the round after this one. */
+  readonly handsLeft?: number;
+  readonly discardsLeft?: number;
   readonly money: number;
   /** Boss rule: debuffed cards still count for the hand type but add nothing and trigger nothing. */
   readonly isDebuffed?: (card: RunCard) => boolean;
@@ -57,6 +60,19 @@ export interface ScoreResult {
   readonly money: number;
 }
 
+/** Chips and mult of a hand type at a level (level 1 = base values). */
+export function handBase(
+  handType: HandCategory,
+  level: number,
+  content: RunContent = DEFAULT_CONTENT,
+): { chips: number; mult: number } {
+  const stats = content.handTypes[handType];
+  return {
+    chips: stats.chips + stats.chipsPerLevel * (level - 1),
+    mult: stats.mult + stats.multPerLevel * (level - 1),
+  };
+}
+
 /**
  * Scores a played hand. Fixed order:
  *
@@ -71,14 +87,14 @@ export interface ScoreResult {
 export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTENT): ScoreResult {
   const { type: handType, scoringCards } = evaluatePlayedHand(input.played);
   const level = input.handLevels[handType];
-  const stats = content.handTypes[handType];
   const debuffed = input.isDebuffed ?? (() => false);
   const jokerDefs = new Map(content.jokers.map((j) => [j.id, j]));
   const enhancementDefs = new Map(content.enhancements.map((e) => [e.id, e]));
   const jokers = input.jokers.map((j) => ({ ...j }));
 
-  let chips = stats.chips + stats.chipsPerLevel * (level - 1);
-  let mult = stats.mult + stats.multPerLevel * (level - 1);
+  const base = handBase(handType, level, content);
+  let chips = base.chips;
+  let mult = base.mult;
   let money = 0;
   const steps: ScoreStep[] = [
     { source: { kind: 'base', handType, level }, effect: { chips, mult }, chips, mult },
@@ -91,6 +107,8 @@ export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTE
     held: input.held,
     jokers,
     handsPlayed: input.handsPlayed,
+    handsLeft: input.handsLeft ?? 0,
+    discardsLeft: input.discardsLeft ?? 0,
     money: input.money + money,
   });
   const apply = (source: ScoreSource, effect: Effect | undefined) => {

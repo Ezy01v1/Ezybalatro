@@ -1,0 +1,50 @@
+# E2E: start a run → play a hand → beat the blind → enter the shop → buy a joker.
+#
+# Seed "E2E-9" deals 3c Ks Kh 9c 5c 9d 7s 9s: K-K-9-9-9 is a full house worth 380 against the
+# small blind target of 250, and the reward ($10) pays for any joker. If the content or the balance
+# numbers change, find a new seed with `node packages/engine/scripts/find-e2e-seed.mjs`.
+#
+# Runs against Expo Go with the dev server on the device (USB: `adb reverse tcp:8081 tcp:8081`).
+# With a development build, replace appId and the openLink step with `launchApp`.
+appId: host.exp.exponent
+---
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible:
+      id: "seeded-run"
+    timeout: 60000
+- tapOn:
+    id: "seeded-run"
+- tapOn:
+    id: "seed-input"
+- inputText: "E2E-9"
+- tapOn:
+    id: "seed-start"
+- extendedWaitUntil:
+    visible:
+      id: "card-Ks"
+    timeout: 10000
+- tapOn:
+    id: "card-Ks"
+- tapOn:
+    id: "card-Kh"
+- tapOn:
+    id: "card-9c"
+- tapOn:
+    id: "card-9d"
+- tapOn:
+    id: "card-9s"
+- assertVisible: "Full"
+- tapOn:
+    id: "play-button"
+- extendedWaitUntil:
+    visible:
+      id: "to-shop-button"
+    timeout: 10000
+- tapOn:
+    id: "to-shop-button"
+- assertVisible: "Tienda"
+- tapOn:
+    id: "buy-0"
+- assertVisible:
+    id: "joker-j1"

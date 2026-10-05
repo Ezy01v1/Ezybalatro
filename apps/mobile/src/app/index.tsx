@@ -1,101 +1,92 @@
 import { ENGINE_VERSION } from '@naipes/engine';
-import { SOCKET_EVENTS } from '@naipes/shared';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { StyleSheet, View } from 'react-native';
+import { useGame } from '@/game/store';
 import { es } from '@/i18n/es';
-import { colors, radii, spacing, touchTarget, typography } from '@/theme/tokens';
-
-type ModeButtonProps = {
-  label: string;
-  hint: string;
-  onPress: () => void;
-};
-
-function ModeButton({ label, hint, onPress }: ModeButtonProps) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityHint={hint}
-      onPress={onPress}
-      style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-    >
-      <Text style={styles.buttonLabel}>{label}</Text>
-      <Text style={styles.buttonHint}>{hint}</Text>
-    </Pressable>
-  );
-}
+import { colors, layout, radii, spacing } from '@/theme/tokens';
+import { Button, DecoRule, Screen, Text } from '@/ui/primitives';
 
 export default function HomeScreen() {
-  // Phase 0: buttons are intentionally inert. Navigation arrives with each mode.
-  const noop = () => {};
+  const run = useGame((s) => s.run);
+  const saveStatus = useGame((s) => s.saveStatus);
+  const startRun = useGame((s) => s.startRun);
+  const canContinue = !!run && run.status === 'in_progress';
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <Screen>
       <View style={styles.header}>
-        <Text style={styles.title}>{es.appName}</Text>
-        <Text style={styles.subtitle}>{es.home.subtitle}</Text>
+        <Text variant="display" tone="primary" center style={styles.title}>
+          {es.appName}
+        </Text>
+        <DecoRule style={styles.rule} />
+        <Text variant="body" tone="muted" center>
+          {es.home.subtitle}
+        </Text>
       </View>
-      <View style={styles.actions}>
-        <ModeButton label={es.home.roguelike} hint={es.home.roguelikeHint} onPress={noop} />
-        <ModeButton label={es.home.table} hint={es.home.tableHint} onPress={noop} />
+
+      <View style={styles.section}>
+        <Text variant="subtitle">{es.home.roguelike}</Text>
+        <Text variant="caption" tone="muted">
+          {es.home.roguelikeHint}
+        </Text>
+        {saveStatus === 'corrupt' ? (
+          <Text variant="caption" tone="danger" accessibilityLiveRegion="polite">
+            {es.home.corruptSave}
+          </Text>
+        ) : null}
+        {canContinue ? (
+          <Button
+            testID="continue-run"
+            label={es.home.continueRun}
+            accessibilityHint={es.home.continueHint(run.ante)}
+            onPress={() => router.push('/run')}
+          />
+        ) : null}
+        <Button
+          testID="new-run"
+          variant={canContinue ? 'secondary' : 'primary'}
+          label={es.home.newRun}
+          onPress={() => {
+            startRun();
+            router.push('/run');
+          }}
+        />
+        <Button
+          testID="seeded-run"
+          variant="ghost"
+          label={es.home.seededRun}
+          onPress={() => router.push('/seed')}
+        />
       </View>
-      <Text style={styles.footer}>
-        engine {ENGINE_VERSION} · protocol {Object.keys(SOCKET_EVENTS).length} events
+
+      <View style={[styles.section, styles.table]}>
+        <Text variant="subtitle">{es.home.table}</Text>
+        <Text variant="caption" tone="muted">
+          {es.home.tableHint}
+        </Text>
+      </View>
+
+      <Text variant="caption" tone="muted" center style={styles.footer}>
+        engine {ENGINE_VERSION}
       </Text>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing.md,
-    justifyContent: 'space-between',
-  },
-  header: {
-    marginTop: spacing.xl * 2,
+  header: { paddingHorizontal: layout.gutter, paddingTop: spacing.xxl, gap: spacing.sm },
+  title: { fontSize: 48, lineHeight: 52 },
+  rule: { marginHorizontal: spacing.xxl },
+  section: {
+    marginHorizontal: layout.gutter,
+    marginTop: spacing.xl,
+    padding: spacing.lg,
     gap: spacing.sm,
-  },
-  title: {
-    ...typography.title,
-    color: colors.fg,
-  },
-  subtitle: {
-    ...typography.body,
-    color: colors.muted,
-  },
-  actions: {
-    gap: spacing.md,
-    marginBottom: spacing.xl,
-  },
-  button: {
-    minHeight: touchTarget * 2,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: radii.md,
     backgroundColor: colors.surface,
+    borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  buttonPressed: {
-    opacity: 0.8,
-    transform: [{ scale: 0.98 }],
-  },
-  buttonLabel: {
-    ...typography.button,
-    color: colors.fg,
-  },
-  buttonHint: {
-    ...typography.body,
-    color: colors.muted,
-    marginTop: spacing.xs,
-  },
-  footer: {
-    ...typography.caption,
-    color: colors.muted,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-  },
+  table: { opacity: 0.6 },
+  footer: { marginTop: 'auto', paddingBottom: spacing.sm },
 });

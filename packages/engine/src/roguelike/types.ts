@@ -1,4 +1,4 @@
-import type { Card, Suit } from '../cards';
+import type { Card, Rank, Suit } from '../cards';
 import type { HandCategory } from '../hands/hand-category';
 
 /** A card in a run's deck. Same rank/suit/id as a standard card, plus optional modifiers. */
@@ -35,6 +35,9 @@ export interface HandContext {
   readonly jokers: readonly JokerInstance[];
   /** Hands played in the run, this one included. */
   readonly handsPlayed: number;
+  /** Hands left in this round after this one (0 = last hand). */
+  readonly handsLeft: number;
+  readonly discardsLeft: number;
   readonly money: number;
 }
 
@@ -89,8 +92,12 @@ export interface BossDefinition {
   readonly id: string;
   /** Cards of this suit do not score and trigger nothing. */
   readonly debuffSuit?: Suit;
+  /** Cards of these ranks do not score and trigger nothing. */
+  readonly debuffRanks?: readonly Rank[];
   readonly handsDelta?: number;
   readonly discardsDelta?: number;
+  /** Change to the number of cards in hand. */
+  readonly handSizeDelta?: number;
 }
 
 export interface HandTypeStats {

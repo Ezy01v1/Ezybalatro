@@ -26,15 +26,20 @@ const GENTLE: RunConfig = {
 function randomAction(rng: Rng, state: RunState): RunAction {
   const roll = nextInt(rng, 100);
   if (state.phase === 'shop') {
-    const affordable = state.shop.flatMap((o, i) => (!o.sold && o.price <= state.money ? [i] : []));
+    const slotsFull = state.jokers.length >= state.config.jokerSlots;
+    const affordable = state.shop.flatMap((o, i) =>
+      !o.sold && o.price <= state.money && !(o.kind === 'joker' && slotsFull) ? [i] : [],
+    );
     if (roll < 40 && affordable.length > 0)
       return { type: 'buy', offerIndex: affordable[nextInt(rng, affordable.length)]! };
     if (roll < 50 && state.jokers.length >= 2)
       return { type: 'moveJoker', from: 0, to: state.jokers.length - 1 };
     if (roll < 55 && state.jokers.length > 0)
       return { type: 'sellJoker', instanceId: state.jokers[0]!.instanceId };
+    if (roll < 62 && state.money >= state.rerollCost) return { type: 'reroll' };
     return { type: 'leaveShop' };
   }
+  if (roll > 95) return { type: 'sortHand', by: roll % 2 === 0 ? 'rank' : 'suit' };
   const count = 1 + nextInt(rng, Math.min(5, state.hand.length));
   const cardIds = shuffle(rng, state.hand)
     .slice(0, count)

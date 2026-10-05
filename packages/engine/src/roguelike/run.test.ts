@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CONTENT,
   DEFAULT_RUN_CONFIG,
+  RUN_STATE_VERSION,
   createRun,
   hasUniqueIds,
+  isCardDebuffed,
+  previewPlay,
   runReducer,
   type JokerDefinition,
   type RunAction,
@@ -133,7 +136,9 @@ describe('rounds, rewards and shop', () => {
       money: 20,
     });
     expect([state.phase, state.blind, state.money]).toEqual(['shop', 'big', 20]);
-    expect(state.shop.map((o) => o.kind)).toEqual(['joker', 'joker', 'levelUp']);
+    expect(state.shop.map((o) => o.kind)).toEqual(['joker', 'joker', 'levelUp', 'levelUp']);
+    const [, , a, b] = state.shop;
+    expect(a?.kind === 'levelUp' && b?.kind === 'levelUp' && a.handType !== b.handType).toBe(true);
   });
 
   it('interest is capped', () => {
@@ -293,5 +298,85 @@ describe('progression', () => {
     const skipped = act(atShop, { type: 'leaveShop' }).state;
     expect(bought.hand).toEqual(skipped.hand);
     expect(bought.drawPile).toEqual(skipped.drawPile);
+  });
+});
+
+describe('MVP content and shop', () => {
+  it('ships 20 jokers and 5 bosses with unique ids', () => {
+    expect(DEFAULT_CONTENT.jokers).toHaveLength(20);
+    expect(DEFAULT_CONTENT.bosses).toHaveLength(5);
+    expect(new Set(DEFAULT_CONTENT.jokers.map((j) => j.id)).size).toBe(20);
+  });
+
+  it('reroll costs more each time in the same shop and resets in the next one', () => {
+    let state = playFirst(createRun('reroll', { ...EASY, startingMoney: 40 }).state).state;
+    const money = state.money;
+    const first = act(state, { type: 'reroll' });
+    expect(first.events).toContainEqual(
+      expect.objectContaining({ type: 'shopRerolled', nextCost: 4 }),
+    );
+    state = act(first.state, { type: 'reroll' }).state;
+    expect([state.money, state.rerollCost]).toEqual([money - 3 - 4, 5]);
+    state = act(state, { type: 'leaveShop' }).state;
+    state = playFirst(state).state;
+    expect(state.rerollCost).toBe(3);
+    const broke = { ...state, money: 2 };
+    expect(errorOf(broke, { type: 'reroll' })).toBe('NOT_ENOUGH_MONEY');
+    expect(errorOf(createRun('x').state, { type: 'reroll' })).toBe('INVALID_PHASE');
+  });
+
+  it('sorts the hand by rank or suit', () => {
+    const { state } = createRun('sort');
+    const byRank = act(state, { type: 'sortHand', by: 'rank' }).state.hand.map((c) => c.rank);
+    expect(byRank).toEqual([...byRank].sort((a, b) => b - a));
+    const bySuit = act(state, { type: 'sortHand', by: 'suit' }).state.hand.map((c) => c.suit);
+    const order = ['s', 'h', 'd', 'c'];
+    expect(bySuit).toEqual([...bySuit].sort((a, b) => order.indexOf(a) - order.indexOf(b)));
+  });
+
+  it('previews the hand type and base score without playing', () => {
+    const { state } = createRun('preview');
+    const [a] = state.hand;
+    const preview = previewPlay(state, [a!.id]);
+    expect(preview).toEqual({
+      handType: 'high_card',
+      level: 1,
+      chips: 5,
+      mult: 1,
+      scoringIds: [a!.id],
+    });
+    expect(previewPlay(state, [])).toBeNull();
+    expect(previewPlay(state, ['XX'])).toBeNull();
+  });
+
+  it('boss "press" shrinks the hand and "mask" debuffs face cards', () => {
+    const toBoss = (bossId: string) => {
+      const content: RunContent = {
+        ...DEFAULT_CONTENT,
+        bosses: DEFAULT_CONTENT.bosses.filter((b) => b.id === bossId),
+      };
+      let state = createRun('boss', EASY, content).state;
+      for (let i = 0; i < 2; i++) {
+        state = playFirst(state, 1, content).state;
+        state = act(state, { type: 'leaveShop' }, content).state;
+      }
+      return { state, content };
+    };
+    const press = toBoss('press').state;
+    expect([press.blind, press.handSize, press.hand.length]).toEqual(['boss', 7, 7]);
+    const { state: mask, content } = toBoss('mask');
+    const face = mask.deck.find((c) => c.rank === 12)!;
+    expect(isCardDebuffed(mask, face, content)).toBe(true);
+    expect(
+      isCardDebuffed(
+        mask,
+        mask.deck.find((c) => c.rank === 9)!,
+        content,
+      ),
+    ).toBe(false);
+  });
+
+  it('saved states carry the schema version', () => {
+    expect(createRun('v').state.version).toBe(RUN_STATE_VERSION);
   });
 });
