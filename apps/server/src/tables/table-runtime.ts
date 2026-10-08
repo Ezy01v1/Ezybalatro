@@ -16,11 +16,15 @@ import type {
   SocketError,
   TableClosed,
   TableClosedReason,
+  TableDegraded,
   TableUpdate,
 } from '@naipes/shared';
 import { socketError, toSocketError } from './errors';
+import { HandRecorder } from './hand-recorder';
+import { persistRetryDelay } from './persist-retry';
 import { PlayerTimers, type PlayerTimerToken } from './player-timers';
-import type { DeckSource, Scheduler, TableLogger, Timer, WalletPort } from './ports';
+import type { DeckSource, Scheduler, TableLogger, Timer } from './ports';
+import { HandAlreadyPersistedError, type HandRecord, type TableStore } from './table-store';
 import type { TableTimings } from './table-settings';
 import {
   chipsOnTable,
@@ -33,15 +37,20 @@ import {
 export { isBotId };
 
 export type TableMessage =
-  { type: 'update'; update: TableUpdate } | { type: 'closed'; closed: TableClosed };
+  | { type: 'update'; update: TableUpdate }
+  | { type: 'closed'; closed: TableClosed }
+  | { type: 'degraded'; degraded: TableDegraded };
 export type TableListener = (message: TableMessage) => void;
 export type TableResult<T extends object = object> = Ack<T>;
 export type TableStatus = 'open' | 'running' | 'closed';
 
 export interface TableHooks {
-  /** A hand settled or was voided. */
+  /** A hand settled or was voided, and it was saved. */
   afterHand(table: TableRuntime): void;
-  /** A player's seat was freed; `cashOut` was already credited to the wallet or the house. */
+  /**
+   * A player's seat was freed; `cashOut` was already credited to the wallet or the house (when the
+   * seat was freed by a hand, once that hand was saved).
+   */
   playerLeft(table: TableRuntime, playerId: string, cashOut: number): void;
   /** Any applied change. */
   changed(table: TableRuntime): void;
@@ -54,8 +63,8 @@ export interface TableRuntimeDeps {
   timings: TableTimings;
   scheduler: Scheduler;
   deckSource: DeckSource;
-  wallet: WalletPort;
-  house: WalletPort;
+  /** Seats, cash-outs and hands; it tells bots (house chips) from humans (wallets). */
+  store: TableStore;
   logger: TableLogger;
   hooks?: Partial<TableHooks>;
 }
@@ -68,11 +77,20 @@ const tableClosed = () => fail(socketError('TABLE_CLOSED', 'The table is closed'
 const OK = { ok: true } as const;
 
 type TurnClock = { readonly handNumber: number; readonly seat: number; readonly deadline: number };
+type Left = { playerId: string; seat: number; cashOut: number };
+/** A hand that ended but could not be saved yet; `left`: seats it freed (hooks wait for the save). */
+type Unsaved = { record: HandRecord; left: Left[] };
+
+const endsHand = (events: readonly HoldemEvent[]): boolean =>
+  events.some((e) => e.type === 'handSettled' || e.type === 'handVoided');
 
 /**
  * Authoritative, in-memory runtime of one Hold'em table (spec §3.3, §5.1, §5.2, §6.2).
  *
- * Every public command runs through a FIFO promise queue, one at a time, including its wallet awaits.
+ * Every public command runs through a FIFO promise queue, one at a time, including its store awaits.
+ * A hand that ends is saved with `store.persistHand` inside the queue before the next one can start;
+ * while that fails the table is degraded (spec §3.3): it retries, deals no hand, takes no new seat
+ * and queues leaves until the save goes through.
  * Each applied change bumps `seq` once and sends every subscriber one `update` with its own
  * `viewFor`. The `TableState`, the deck and hole cards never leave this class except through
  * `viewFor`: they are never logged nor put in error messages.
@@ -100,6 +118,13 @@ export class TableRuntime {
   /** Disconnect grace and sitting-out leave timers. */
   private readonly playerTimers: PlayerTimers;
   private dealingStopped = false;
+  private readonly recorder = new HandRecorder();
+  /** Set while the table is degraded. */
+  private unsaved: Unsaved | null = null;
+  private retryTimer: Timer | null = null;
+  private retryAttempt = 0;
+  /** Leaves asked for while degraded: resolved with the next successful `persistHand`. */
+  private readonly pendingLeaves = new Set<string>();
 
   constructor(deps: TableRuntimeDeps) {
     this.deps = deps;
@@ -122,6 +147,16 @@ export class TableRuntime {
 
   get createdAt(): number {
     return this.created;
+  }
+
+  /** The last hand is not saved yet: no hand starts and no new player sits until it is. */
+  get degraded(): boolean {
+    return this.unsaved !== null;
+  }
+
+  /** The player asked to leave while degraded; the seat is freed once the hand is saved. */
+  isLeavePending(playerId: string): boolean {
+    return this.pendingLeaves.has(playerId);
   }
 
   /** True after `stopDealing` or once closed: no new hand will start. */
@@ -172,6 +207,7 @@ export class TableRuntime {
     }
     this.listeners.set(playerId, listener);
     this.send(playerId, listener, { type: 'update', update: this.snapshot(playerId) });
+    if (this.degraded) this.send(playerId, listener, this.degradedMessage(true));
     return () => {
       if (this.listeners.get(playerId) === listener) this.listeners.delete(playerId);
     };
@@ -196,21 +232,23 @@ export class TableRuntime {
       if (!Number.isSafeInteger(buyIn) || buyIn <= 0) {
         return fail(socketError('INVALID_AMOUNT', 'Buy-in must be a positive integer'));
       }
+      if (this.degraded) return internalError();
       const seat = this.state.seats.findIndex((s) => s === null);
       if (seat === -1) return fail(socketError('TABLE_FULL', 'The table is full'));
-      const source = this.sourceOf(playerId);
-      if (!(await source.debit(playerId, buyIn))) {
+      const stored = { tableId: this.id, seat, playerId };
+      const outcome = await this.deps.store.sitDown({ ...stored, buyIn });
+      if (outcome === 'insufficient') {
         return fail(socketError('INSUFFICIENT_CHIPS', 'Not enough chips for the buy-in'));
       }
       let result: HoldemResult;
       try {
         result = this.apply({ type: 'sit', playerId, seat, buyIn, postBlindsToEnter });
       } catch (error) {
-        await source.credit(playerId, buyIn);
+        await this.standUpQuietly({ ...stored, cashOut: buyIn });
         throw error;
       }
       if (!result.ok) {
-        await source.credit(playerId, buyIn);
+        await this.standUpQuietly({ ...stored, cashOut: buyIn });
         return fail(toSocketError(result.error));
       }
       this.expectedChips += buyIn;
@@ -253,7 +291,7 @@ export class TableRuntime {
   leave(playerId: string): Promise<TableResult<{ cashOut: number | null }>> {
     return this.enqueue('leave', async () => {
       if (this.closedReason) return tableClosed();
-      const result = await this.applyAndCommit({ type: 'leave', playerId });
+      const result = await this.requestLeave(playerId);
       if (!result.ok) return result;
       const left = playerLeftEvents(result.events).find((e) => e.playerId === playerId);
       return { ok: true, cashOut: left ? left.cashOut : null };
@@ -279,6 +317,8 @@ export class TableRuntime {
   /** No new hand starts from now on; the hand in progress plays out (shutdown, spec §5.5). */
   stopDealing(): void {
     this.dealingStopped = true;
+    this.retryTimer?.cancel();
+    this.retryTimer = null;
     this.startTimer?.cancel();
     this.startTimer = null;
   }
@@ -307,8 +347,8 @@ export class TableRuntime {
   // ------------------------------------------------------------ internals
 
   /** Every reducer call goes through here (test seam). */
-  protected apply(action: HoldemAction): HoldemResult {
-    return holdemReducer(this.state, action);
+  protected apply(action: HoldemAction, state: TableState = this.state): HoldemResult {
+    return holdemReducer(state, action);
   }
 
   private enqueue<T extends object>(
@@ -350,11 +390,39 @@ export class TableRuntime {
     }
   }
 
+  /**
+   * Applies and commits `action`. Seats it frees outside the end of a hand are stood up in the store
+   * first: if that fails nothing changes (the player stays seated) and the result is INTERNAL.
+   */
   private async applyAndCommit(action: HoldemAction): Promise<Applied> {
     const result = this.apply(action);
     if (!result.ok) return fail(toSocketError(result.error));
+    if (!endsHand(result.events)) {
+      for (const e of playerLeftEvents(result.events)) {
+        try {
+          await this.deps.store.standUp({
+            tableId: this.id,
+            seat: e.seat,
+            playerId: e.playerId,
+            cashOut: e.cashOut,
+          });
+        } catch (error) {
+          this.logError('could not stand a player up', error);
+          return internalError();
+        }
+      }
+    }
     if (!(await this.commit(result))) return internalError();
     return { ok: true, events: result.events };
+  }
+
+  /** `leave`, or, while degraded and between hands, a pending leave resolved by the next save. */
+  private async requestLeave(playerId: string): Promise<Applied> {
+    if (this.degraded && this.seatOf(playerId) !== null && !this.isHandInProgress()) {
+      this.pendingLeaves.add(playerId);
+      return { ok: true, events: [] };
+    }
+    return this.applyAndCommit({ type: 'leave', playerId });
   }
 
   /**
@@ -367,14 +435,15 @@ export class TableRuntime {
   }): Promise<boolean> {
     this.state = result.state;
     this.currentSeq++;
+    this.recorder.observe(result.events);
     this.updateTurnClock(result.events);
     this.syncPlayerTimers();
-    const left = playerLeftEvents(result.events);
-    for (const e of left) {
-      // The chips left the table whether or not the credit succeeds.
-      this.expectedChips -= e.cashOut;
-      await this.cashOut(e.playerId, e.cashOut);
-    }
+    const left: Left[] = playerLeftEvents(result.events).map((e) => ({
+      playerId: e.playerId,
+      seat: e.seat,
+      cashOut: e.cashOut,
+    }));
+    for (const e of left) this.expectedChips -= e.cashOut;
     this.broadcast(result.events);
     for (const e of left) this.listeners.delete(e.playerId);
 
@@ -386,12 +455,117 @@ export class TableRuntime {
       await this.shutdown('error');
       return false;
     }
-    if (result.events.some((e) => e.type === 'handSettled' || e.type === 'handVoided')) {
-      this.callHook('afterHand', (h) => h.afterHand?.(this));
+    const record = this.recorder.build(this.id, this.state, result.events);
+    if (record) {
+      await this.persist({ record, left });
+    } else {
+      // Freed outside the end of a hand: already stood up in the store.
+      this.seatsFreed(left);
     }
     this.callHook('changed', (h) => h.changed?.(this));
     this.scheduleNextHand();
     return true;
+  }
+
+  /** Saves an ended hand; on failure the table becomes degraded and retries on its own. */
+  private async persist(unsaved: Unsaved): Promise<void> {
+    try {
+      await this.deps.store.persistHand(unsaved.record);
+    } catch (error) {
+      this.logError('could not save the hand, retrying', error);
+      this.unsaved = unsaved;
+      this.retryAttempt = 0;
+      this.broadcastMessage(this.degradedMessage(true));
+      this.scheduleRetry();
+      return;
+    }
+    this.handSaved(unsaved.left);
+  }
+
+  private handSaved(left: Left[]): void {
+    this.seatsFreed(left);
+    this.callHook('afterHand', (h) => h.afterHand?.(this));
+  }
+
+  private seatsFreed(left: Left[]): void {
+    for (const e of left) {
+      this.callHook('playerLeft', (h) => h.playerLeft?.(this, e.playerId, e.cashOut));
+    }
+  }
+
+  private scheduleRetry(): void {
+    if (this.closing) return;
+    this.retryAttempt++;
+    this.retryTimer = this.deps.scheduler.schedule(persistRetryDelay(this.retryAttempt), () => {
+      void this.enqueue('persistRetry', () => this.retryPersist());
+    });
+  }
+
+  /**
+   * Saves the unsaved hand again, now with the pending leaves as leavers of that hand (their stacks
+   * have not moved since). Only once it is saved do those seats go through the reducer.
+   */
+  private async retryPersist(): Promise<TableResult> {
+    this.retryTimer = null;
+    const unsaved = this.unsaved;
+    if (this.closedReason || !unsaved) return OK;
+    let state = this.state;
+    const events: HoldemEvent[] = [];
+    for (const playerId of this.pendingLeaves) {
+      if (this.seatOf(playerId) === null) continue;
+      const result = this.apply({ type: 'leave', playerId }, state);
+      if (!result.ok) throw new Error(`pending leave rejected with ${result.error.code}`);
+      state = result.state;
+      events.push(...result.events);
+    }
+    const leaving = playerLeftEvents(events);
+    const leavingSeats = new Set(leaving.map((e) => e.seat));
+    const record: HandRecord = {
+      ...unsaved.record,
+      stacks: unsaved.record.stacks.filter((s) => !leavingSeats.has(s.seat)),
+      leavers: [
+        ...unsaved.record.leavers,
+        ...leaving.map((e) => ({ playerId: e.playerId, seat: e.seat, cashOut: e.cashOut })),
+      ],
+    };
+    try {
+      await this.saveRetried(record);
+    } catch (error) {
+      this.logError('could not save the hand, retrying', error);
+      this.scheduleRetry();
+      return OK;
+    }
+    this.unsaved = null;
+    this.pendingLeaves.clear();
+    this.broadcastMessage(this.degradedMessage(false));
+    this.handSaved(unsaved.left);
+    if (events.length > 0) {
+      // Already credited by the save: `commit` only adopts them and fires `playerLeft`.
+      await this.commit({ state, events });
+    } else {
+      this.scheduleNextHand();
+    }
+    return OK;
+  }
+
+  /**
+   * `persistHand` for a retry. If an earlier attempt already committed (its acknowledgement was
+   * lost), the hand counts as saved; the leavers that were not in that committed record are stood up
+   * one by one (a failure here throws and the next retry continues with the ones still seated).
+   */
+  private async saveRetried(record: HandRecord): Promise<void> {
+    try {
+      await this.deps.store.persistHand(record);
+      return;
+    } catch (error) {
+      if (!(error instanceof HandAlreadyPersistedError)) throw error;
+      this.deps.logger.warn(
+        `Table ${this.id}: hand ${record.handNumber} was already saved (lost acknowledgement)`,
+      );
+      for (const l of error.unsavedLeavers) {
+        await this.deps.store.standUp({ tableId: this.id, ...l });
+      }
+    }
   }
 
   private updateTurnClock(events: readonly HoldemEvent[]): void {
@@ -482,7 +656,7 @@ export class TableRuntime {
   /** The normal leave path: credits the wallet (or the house) and fires the hooks. */
   private async sittingOutExpired(playerId: string, token: PlayerTimerToken): Promise<TableResult> {
     if (!this.playerTimers.take('sittingOut', playerId, token) || this.closedReason) return OK;
-    const result = await this.applyAndCommit({ type: 'leave', playerId });
+    const result = await this.requestLeave(playerId);
     if (!result.ok) {
       this.deps.logger.warn(`Table ${this.id}: sitting-out leave rejected (${result.error.code})`);
     }
@@ -490,7 +664,7 @@ export class TableRuntime {
   }
 
   private scheduleNextHand(): void {
-    if (this.closing || this.startTimer || this.isHandInProgress()) return;
+    if (this.closing || this.degraded || this.startTimer || this.isHandInProgress()) return;
     if (nextHandPositions(this.state) === null) return;
     this.startTimer = this.deps.scheduler.schedule(this.deps.timings.betweenHandsMs, () => {
       void this.enqueue('startHand', () => this.startHand());
@@ -499,7 +673,12 @@ export class TableRuntime {
 
   private async startHand(): Promise<TableResult> {
     this.startTimer = null;
-    if (this.closing || this.isHandInProgress() || nextHandPositions(this.state) === null) {
+    if (
+      this.closing ||
+      this.degraded ||
+      this.isHandInProgress() ||
+      nextHandPositions(this.state) === null
+    ) {
       return OK;
     }
     const result = this.apply({ type: 'postBlinds', deck: this.deps.deckSource.nextDeck() });
@@ -513,36 +692,70 @@ export class TableRuntime {
   }
 
   /**
-   * Closes the table. Except for `error`, the hand in progress is voided and everybody leaves through
-   * the reducer (and gets a last update). With `error` nothing goes through the reducer: each player
-   * gets the stack they had at the start of the hand in progress, or their current stack.
+   * Closes the table. Except for `error`, the hand in progress is voided (and saved as such) and
+   * everybody leaves through the reducer (and gets a last update). With `error` nothing goes through
+   * the reducer: each player gets the stack they had at the start of the hand in progress, or their
+   * current stack. Every seat is stood up in the store; failures are logged (the recovery at startup
+   * returns what is left in the store).
    */
   private async shutdown(reason: TableClosedReason): Promise<void> {
     if (this.closedReason) return;
     this.closedReason = reason;
     this.startTimer?.cancel();
     this.startTimer = null;
+    this.retryTimer?.cancel();
+    this.retryTimer = null;
     this.stopTurnClock();
     this.playerTimers.cancelAll();
+
+    // A hand still unsaved gets one last try. If it fails, nobody is stood up: the store keeps the
+    // last saved (pre-hand) stacks for the startup recovery, so the unsaved hand is in effect voided
+    // (ADR 0004). Standing some seats up at post-hand stacks would mix both and break invariant 1.
+    let touchStore = true;
+    if (this.unsaved) {
+      try {
+        await this.saveRetried(this.unsaved.record);
+        this.seatsFreed(this.unsaved.left);
+      } catch (error) {
+        touchStore = false;
+        this.logError('could not save the hand before closing; seats left for recovery', error);
+        this.seatsFreed(this.unsaved.left);
+      }
+      this.unsaved = null;
+      this.pendingLeaves.clear();
+    }
 
     const events: HoldemEvent[] = [];
     if (reason !== 'error') {
       try {
-        if (this.isHandInProgress()) this.applyInPlace({ type: 'voidHand' }, events);
+        if (this.isHandInProgress()) {
+          const voided: HoldemEvent[] = [];
+          this.applyInPlace({ type: 'voidHand' }, voided);
+          events.push(...voided);
+          await this.saveQuietly(this.recorder.build(this.id, this.state, voided));
+        }
         for (const playerId of this.playerIds())
           this.applyInPlace({ type: 'leave', playerId }, events);
       } catch (error) {
         this.logError('could not cash out through the reducer', error);
       }
     }
-    const refunds = [
-      ...playerLeftEvents(events).map((e) => ({ playerId: e.playerId, amount: e.cashOut })),
+    const refunds: Left[] = [
+      ...playerLeftEvents(events).map((e) => ({
+        playerId: e.playerId,
+        seat: e.seat,
+        cashOut: e.cashOut,
+      })),
       ...refundsFromState(this.state),
     ];
     this.state = { ...this.state, seats: this.state.seats.map(() => null), hand: null };
     this.expectedChips = 0;
 
-    for (const { playerId, amount } of refunds) await this.cashOut(playerId, amount);
+    for (const refund of refunds) {
+      if (touchStore) await this.cashOut(refund);
+      else
+        this.callHook('playerLeft', (h) => h.playerLeft?.(this, refund.playerId, refund.cashOut));
+    }
     if (events.length > 0) {
       this.currentSeq++;
       this.broadcast(events);
@@ -587,6 +800,14 @@ export class TableRuntime {
     return { type: 'closed', closed: { tableId: this.id, reason } };
   }
 
+  private degradedMessage(degraded: boolean): TableMessage {
+    return { type: 'degraded', degraded: { tableId: this.id, degraded } };
+  }
+
+  private broadcastMessage(message: TableMessage): void {
+    for (const [playerId, listener] of [...this.listeners]) this.send(playerId, listener, message);
+  }
+
   /** A failing listener is logged and never affects the table or the other listeners. */
   private send(playerId: string, listener: TableListener, message: TableMessage): void {
     try {
@@ -605,22 +826,29 @@ export class TableRuntime {
   }
 
   /**
-   * Credits a freed seat's chips to the wallet or the house and calls `hooks.playerLeft`. A failed
-   * credit is logged and never interrupts the command (the rest of the commit or close still runs).
+   * Stands a seat up in the store (crediting the wallet or the house) and calls `hooks.playerLeft`
+   * (close path). A failure is logged and never interrupts the close.
    */
-  private async cashOut(playerId: string, amount: number): Promise<void> {
-    if (amount > 0) {
-      try {
-        await this.sourceOf(playerId).credit(playerId, amount);
-      } catch (error) {
-        this.logError(`could not cash out ${amount} chips`, error);
-      }
-    }
-    this.callHook('playerLeft', (h) => h.playerLeft?.(this, playerId, amount));
+  private async cashOut(left: Left): Promise<void> {
+    await this.standUpQuietly({ tableId: this.id, ...left });
+    this.callHook('playerLeft', (h) => h.playerLeft?.(this, left.playerId, left.cashOut));
   }
 
-  private sourceOf(playerId: string): WalletPort {
-    return isBotId(playerId) ? this.deps.house : this.deps.wallet;
+  private async standUpQuietly(a: Parameters<TableStore['standUp']>[0]): Promise<void> {
+    try {
+      await this.deps.store.standUp(a);
+    } catch (error) {
+      this.logError(`could not stand up a seat with ${a.cashOut} chips`, error);
+    }
+  }
+
+  private async saveQuietly(record: HandRecord | null): Promise<void> {
+    if (!record) return;
+    try {
+      await this.deps.store.persistHand(record);
+    } catch (error) {
+      this.logError('could not save the voided hand', error);
+    }
   }
 
   /** Logs the error's name, message and stack only: never the table state or cards. */

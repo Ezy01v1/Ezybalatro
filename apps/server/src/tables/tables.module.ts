@@ -8,10 +8,14 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Rng } from '@naipes/engine';
 import { envSchema, type Env } from '../config/env';
+import { ACCOUNTS } from '../accounts/account-port';
+import { AccountService } from '../accounts/account.service';
+import { PrismaService } from '../db/prisma.service';
+import { RecoveryService } from '../recovery/recovery.service';
 import { DevIdentity, IDENTITY } from '../realtime/identity';
 import { TableGateway } from '../realtime/table.gateway';
 import { CryptoDeckSource } from './crypto-deck-source';
-import { HouseBankroll, InMemoryWallet } from './in-memory-wallet';
+import { PrismaTableStore } from './prisma-table-store';
 import { realScheduler } from './real-scheduler';
 import { TableDirector } from './table-director';
 import { TABLE_SETTINGS, tableSettingsFromEnv, type TableSettings } from './table-settings';
@@ -25,9 +29,26 @@ function envFrom(config: ConfigService<Env, true>): Env {
 /** Bot decisions and names: no need for a CSPRNG, but no seeded stream either. */
 const botRng: Rng = { nextUint32: () => randomInt(0, 2 ** 32) };
 
-/** In-memory tables (Phase 3a, ADR 0004) and their Socket.IO gateway. */
+/** Resolved once startup recovery is done; the director (hence the gateway) depends on it. */
+const RECOVERED = Symbol('RECOVERED');
+
+/**
+ * Tables in memory (ADR 0004) persisted through `PrismaTableStore`, and their Socket.IO gateway.
+ * Startup recovery runs in a provider the director depends on: Nest awaits it before the app
+ * listens, so no connection is accepted while seats from the previous process are being returned.
+ */
 @Module({
   providers: [
+    {
+      provide: RECOVERED,
+      inject: [PrismaService],
+      useFactory: async (prisma: PrismaService): Promise<true> => {
+        const logger = new Logger('Recovery');
+        const { seats, chips } = await new RecoveryService(prisma).recover();
+        logger.log(`Startup recovery: ${seats} seat(s), ${chips} chip(s) returned; open tables closed`);
+        return true;
+      },
+    },
     {
       provide: TABLE_SETTINGS,
       inject: [ConfigService],
@@ -36,14 +57,13 @@ const botRng: Rng = { nextUint32: () => randomInt(0, 2 ** 32) };
     },
     {
       provide: TableDirector,
-      inject: [TABLE_SETTINGS],
-      useFactory: (settings: TableSettings): TableDirector =>
+      inject: [TABLE_SETTINGS, PrismaService, RECOVERED],
+      useFactory: (settings: TableSettings, prisma: PrismaService): TableDirector =>
         new TableDirector({
           settings,
           scheduler: realScheduler,
           deckSource: new CryptoDeckSource(),
-          wallet: new InMemoryWallet(settings.devWalletInitial),
-          house: new HouseBankroll(),
+          store: new PrismaTableStore(prisma),
           logger: new Logger('Tables'),
           botRng,
           newTableId: () => randomUUID(),
@@ -54,6 +74,15 @@ const botRng: Rng = { nextUint32: () => randomInt(0, 2 ** 32) };
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>): DevIdentity =>
         new DevIdentity(config.get('NODE_ENV', { infer: true })),
+    },
+    {
+      provide: ACCOUNTS,
+      inject: [PrismaService, ConfigService],
+      useFactory: (prisma: PrismaService, config: ConfigService<Env, true>): AccountService =>
+        new AccountService(prisma, {
+          initial: config.get('CHIPS_INITIAL', { infer: true }),
+          refillTo: config.get('CHIPS_DAILY_REFILL_TO', { infer: true }),
+        }),
     },
     TableGateway,
   ],

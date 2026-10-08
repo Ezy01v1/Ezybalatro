@@ -3,16 +3,16 @@ import type { Ack, SocketError } from '@naipes/shared';
 import { BOT_NAMES } from '../bots/bot-names';
 import { BotPlayer } from '../bots/bot-player';
 import { socketError } from './errors';
-import type { DeckSource, Scheduler, TableLogger, Timer, WalletPort } from './ports';
+import type { DeckSource, Scheduler, TableLogger, Timer } from './ports';
 import { isBotId, TableRuntime, type TableHooks } from './table-runtime';
 import type { TableSettings } from './table-settings';
+import type { TableStore } from './table-store';
 
 export interface DirectorDeps {
   settings: TableSettings;
   scheduler: Scheduler;
   deckSource: DeckSource;
-  wallet: WalletPort;
-  house: WalletPort;
+  store: TableStore;
   logger: TableLogger;
   /** Bot names and personalities. */
   botRng: Rng;
@@ -30,14 +30,19 @@ interface TableEntry {
   rebalancing: Promise<void> | null;
   /** A rebalance was requested while one was running: run once more. */
   rebalanceAgain: boolean;
+  /** `store.openTable`: nobody sits before it resolves; if it fails the table is dropped. */
+  readonly opened: Promise<void>;
 }
 
 const fail = (error: SocketError): { ok: false; error: SocketError } => ({ ok: false, error });
 
-/** The user's seat at `table`, or null if they are not there or only `leaving` (freed at settle). */
+/**
+ * The user's seat at `table`, or null if they are not there or only `leaving` (freed at settle, or
+ * once a degraded table saves its hand).
+ */
 function activeSeat(table: TableRuntime, userId: string): number | null {
   const seat = table.seatOf(userId);
-  if (seat === null) return null;
+  if (seat === null || table.isLeavePending(userId)) return null;
   return table.snapshot('').view.seats[seat]?.status === 'leaving' ? null : seat;
 }
 
@@ -116,6 +121,17 @@ export class TableDirector {
     if (!amount.ok) return amount;
 
     for (const table of this.candidates(userId)) {
+      // A table still opening in the store may fail (and be dropped) meanwhile: skip it.
+      const entry = this.entries.get(table.id);
+      if (!entry) continue;
+      try {
+        await entry.opened;
+      } catch (error) {
+        const detail = error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error thrown';
+        this.deps.logger.warn(`Table ${table.id} failed to open; skipped for quick seat: ${detail}`);
+        continue;
+      }
+      if (this.entries.get(table.id) !== entry) continue;
       const result = await table.sit(userId, amount.buyIn);
       if (result.ok) return this.seated(userId, table, result.seat);
       if (result.error.code !== 'TABLE_FULL' && result.error.code !== 'TABLE_CLOSED') return result;
@@ -123,6 +139,7 @@ export class TableDirector {
 
     if (this.shuttingDown) return fail(socketError('TABLE_CLOSED', 'The server is shutting down'));
     const table = this.createTable();
+    await this.entries.get(table.id)?.opened;
     const result = await table.sit(userId, amount.buyIn);
     if (result.ok) return this.seated(userId, table, result.seat);
     // Never leave an empty table behind (unless another user's sit got there first).
@@ -146,7 +163,7 @@ export class TableDirector {
         ),
       );
     }
-    const balance = await this.deps.wallet.balance(userId);
+    const balance = await this.deps.store.balance(userId);
     const amount = buyIn ?? Math.min(maxBuyIn, balance);
     if (amount < minBuyIn || amount > balance) {
       return fail(socketError('INSUFFICIENT_CHIPS', 'Not enough chips for the buy-in'));
@@ -161,7 +178,12 @@ export class TableDirector {
   private candidates(userId: string): TableRuntime[] {
     return this.tables()
       .filter(
-        (t) => t.status !== 'closed' && !t.closing && t.hasFreeSeat() && t.seatOf(userId) === null,
+        (t) =>
+          t.status !== 'closed' &&
+          !t.closing &&
+          !t.degraded &&
+          t.hasFreeSeat() &&
+          t.seatOf(userId) === null,
       )
       .sort((a, b) => b.humanCount() - a.humanCount() || a.createdAt - b.createdAt);
   }
@@ -177,8 +199,12 @@ export class TableDirector {
     return { ok: true, tableId: table.id, seat };
   }
 
+  /**
+   * Registers the table in memory right away (so concurrent quick seats find it) and in the store;
+   * seats wait for `opened`.
+   */
   private createTable(): TableRuntime {
-    const { settings, scheduler, deckSource, wallet, house, logger } = this.deps;
+    const { settings, scheduler, deckSource, store, logger } = this.deps;
     const id = this.deps.newTableId();
     const hooks: TableHooks = {
       afterHand: () => void this.rebalance(entry),
@@ -192,8 +218,7 @@ export class TableDirector {
       timings: settings.timings,
       scheduler,
       deckSource,
-      wallet,
-      house,
+      store,
       logger,
       hooks,
     });
@@ -203,7 +228,11 @@ export class TableDirector {
       emptyTimer: null,
       rebalancing: null,
       rebalanceAgain: false,
+      opened: store.openTable(id, settings.config),
     };
+    entry.opened.catch(() => {
+      if (this.entries.get(id) === entry) this.entries.delete(id);
+    });
     this.entries.set(id, entry);
     return runtime;
   }
@@ -254,6 +283,9 @@ export class TableDirector {
       if (tableId === table.id) this.seats.delete(userId);
     }
     if (this.entries.get(table.id) === entry) this.entries.delete(table.id);
+    this.deps.store
+      .closeTable(table.id)
+      .catch((error: unknown) => this.logError(`table ${table.id}: closeTable failed`, error));
   }
 
   // ------------------------------------------------------------ bots
@@ -290,7 +322,7 @@ export class TableDirector {
    */
   private async rebalanceOnce(entry: TableEntry): Promise<void> {
     const table = entry.runtime;
-    const idle = () => table.status === 'open' && !table.closing;
+    const idle = () => table.status === 'open' && !table.closing && !table.degraded;
     if (!idle()) return;
 
     for (const seat of table.snapshot('').view.seats) {

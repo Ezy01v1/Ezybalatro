@@ -19,8 +19,10 @@
     "test:server": "pnpm build:packages && pnpm --filter @naipes/server test",
     "test:mobile": "pnpm build:packages && pnpm --filter @naipes/mobile test",
     "export:mobile": "pnpm --filter @naipes/mobile export",
-    "play": "pnpm build:packages && pnpm --filter @naipes/server build && node apps/server/dist/src/dev-client/play.js",
-    "format": "prettier --write ."
+    "play": "node apps/server/dist/src/dev-client/play.js",
+    "format": "prettier --write .",
+    "db:migrate:dev": "pnpm build:packages && pnpm --filter @naipes/server db:migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @naipes/server db:migrate:deploy"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

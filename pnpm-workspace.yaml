@@ -6,3 +6,10 @@ packages:
 ignoredBuiltDependencies:
   - '@parcel/watcher'
   - unrs-resolver
+
+# Postinstall scripts that must run: embedded Postgres binaries (symlinks on Linux) and Prisma engines.
+onlyBuiltDependencies:
+  - '@embedded-postgres/linux-x64'
+  - '@embedded-postgres/windows-x64'
+  - '@prisma/engines'
+  - prisma

@@ -9,6 +9,7 @@ Contrato entre el cliente y el servidor para el Texas Hold'em No-Limit en tiempo
 - **Fase 3a (identidad de desarrollo):** `token = "dev:<nombre>"`, con nombre de 3 a 20 caracteres `[A-Za-z0-9_]`. Cualquiera puede ser cualquiera. Se rechaza siempre si `NODE_ENV=production`. El `userId` es el token completo (`dev:ana`); los bots tienen ids `bot:<...>`.
 - **Fase 3c:** el token será el JWT de Supabase. El resto del protocolo no cambia.
 - Un usuario tiene una sola conexión activa (ver sección 6).
+- **Cuenta y recarga al conectar (Fase 3b):** antes de aceptar la conexión el servidor asegura la cuenta del usuario (`ensureAccount`): si no existe, la crea con `CHIPS_INITIAL` fichas (10000) y asiento `initial_grant` en el ledger; si ya existe, aplica la recarga diaria. La recarga sube el wallet hasta `CHIPS_DAILY_REFILL_TO` (2000) **una vez por día UTC y solo si el saldo está por debajo**; nunca quita fichas. Conectarse de nuevo no vuelve a pagar nada. Si crear la cuenta o recargar falla, el handshake se rechaza con `connect_error` y `data` = `{ type: 'error', code: 'INTERNAL' }`.
 
 ```ts
 io('http://localhost:3000', { transports: ['websocket'], auth: { token: 'dev:ana' } });
@@ -108,6 +109,16 @@ Se emite a cada usuario por separado, con su propia `viewFor`. Es la vista compl
 
 `reason`: `empty` (sin humanos durante `EMPTY_TABLE_CLOSE_MS`), `shutdown` (el servidor se apaga) o `error` (falló la verificación de conservación de fichas; los stacks se devuelven al inicio de la mano).
 
+### `table:degraded`
+
+```json
+{ "tableId": "e15c5977-...", "degraded": true }
+```
+
+Comportamiento del cliente: mostrar un aviso discreto ("guardando...", sin acciones nuevas de sentarse) mientras `degraded` sea `true`, seguir mostrando la mesa y quitar el aviso con `degraded: false`; no hace falta reintentar nada, el servidor lo hace solo. Si el servidor se reinicia mientras la mesa está degradada, esa mano no guardada se anula (ver sección 6, punto 6).
+
+`degraded: true` cuando la mano que terminó no se pudo guardar: la mesa no reparte otra mano, no acepta jugadores nuevos (`sit` → `INTERNAL`) y un `leave` queda pendiente (ack con `cashOut: null`) hasta que se guarde. El servidor reintenta solo (1 s, 2 s, 4 s, 8 s y luego cada 15 s) y emite `degraded: false` al lograrlo. Quien se suscribe a una mesa degradada lo recibe junto con su primer `table:update`.
+
 ### `session:replaced`
 
 Se emite al socket **viejo** cuando el mismo usuario abre otra conexión, con payload de error y justo antes de desconectarlo:
@@ -153,7 +164,7 @@ Ack de error: `{ ok: false, error: { type: 'error', code, message } }`. Ningún 
 3. **Vence la gracia:** el servidor lo pasa a `sitOut`.
 4. **Más de `SITTING_OUT_MAX_MS` fuera:** el servidor lo saca de la mesa y le devuelve las fichas al wallet.
 5. **Segunda conexión del mismo usuario:** la nueva queda como activa y recibe el snapshot; la vieja recibe `session:replaced` y se desconecta (`io server disconnect`, así que socket.io-client no reconecta solo). Ser reemplazado no cuenta como desconexión.
-6. **Apagado o reinicio del servidor:** cada mesa anula su mano en curso (los stacks vuelven al estado previo), se acreditan los stacks al wallet y se emite `table:closed { reason: 'shutdown' }`; después se cierran los sockets (espera máxima de 2 s para vaciar los buffers). El cliente ve un cierre de transporte y socket.io reconecta solo (los intentos fallidos mientras el servidor está caído son normales). Tras reconectar, la mesa vieja ya no existe, así que hay que hacer `quickSeat` otra vez; `table:quickSeat` es idempotente, por lo que el cliente de referencia lo envía en **cada** conexión (también la primera). Si el servidor corta con `io server disconnect` (por ejemplo `session:replaced`), socket.io **no** reconecta solo: el cliente de referencia sale tras `session:replaced` y, en cualquier otro corte iniciado por el servidor, llama a `socket.connect()`.
+6. **Apagado o reinicio del servidor:** cada mesa anula su mano en curso (los stacks vuelven al estado previo), se acreditan los stacks al wallet y se emite `table:closed { reason: 'shutdown' }`; después se cierran los sockets (espera máxima de 2 s para vaciar los buffers). El cliente ve un cierre de transporte y socket.io reconecta solo (los intentos fallidos mientras el servidor está caído son normales). **Fase 3b (persistencia):** las mesas, asientos y manos viven en Postgres, pero las mesas del proceso anterior no se reanudan. Si el apagado fue limpio, cada mesa cierra y devuelve los stacks al wallet; si la última mano no se había guardado, se anula y el wallet recibe el stack de antes de esa mano (en ese caso los `cashOut` anunciados en `playerLeft` o en el ack de `table:leave` pueden no coincidir con lo que se acredita en el siguiente arranque). Si el proceso murió de golpe, al arrancar la recuperación cierra las mesas abiertas que quedaron y devuelve cada asiento humano al wallet (las fichas de los bots no se acreditan a nadie), todo con asientos en el ledger. El servidor siempre arranca sin mesas. Tras reconectar, la mesa vieja ya no existe, el wallet tiene las fichas, así que hay que hacer `quickSeat` otra vez; `table:quickSeat` es idempotente, por lo que el cliente de referencia lo envía en **cada** conexión (también la primera). Si el servidor corta con `io server disconnect` (por ejemplo `session:replaced`), socket.io **no** reconecta solo: el cliente de referencia sale tras `session:replaced` y, en cualquier otro corte iniciado por el servidor, llama a `socket.connect()`.
 
 ## 7. Garantías de privacidad
 
@@ -174,7 +185,7 @@ Ack de error: `{ ok: false, error: { type: 'error', code, message } }`. Ningún 
 | `SOCKET_RATE_LIMIT_PER_SEC` | 10 | Mensajes por segundo y por conexión |
 | `BOT_DELAY_MIN_MS` / `BOT_DELAY_MAX_MS` | 800 / 2500 | Tiempo simulado de "pensar" de los bots |
 
-Otras variables de la mesa: `TABLE_SMALL_BLIND` (10), `TABLE_BIG_BLIND` (20), `TABLE_MIN_BUY_IN` (400), `TABLE_MAX_BUY_IN` (2000), `TABLE_MAX_SEATS` (6), `TABLE_BOT_FILL_TARGET` (4), `DEV_WALLET_INITIAL` (10000). Ver `apps/server/.env.example`.
+Otras variables de la mesa: `TABLE_SMALL_BLIND` (10), `TABLE_BIG_BLIND` (20), `TABLE_MIN_BUY_IN` (400), `TABLE_MAX_BUY_IN` (2000), `TABLE_MAX_SEATS` (6), `TABLE_BOT_FILL_TARGET` (4), `CHIPS_INITIAL` (10000), `CHIPS_DAILY_REFILL_TO` (2000). Ver `apps/server/.env.example`.
 
 ## 9. Cliente de consola
 

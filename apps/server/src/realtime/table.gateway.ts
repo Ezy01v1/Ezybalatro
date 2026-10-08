@@ -19,6 +19,7 @@ import {
   type TableUpdate,
 } from '@naipes/shared';
 import type { Server, Socket } from 'socket.io';
+import { ACCOUNTS, type AccountPort } from '../accounts/account-port';
 import { socketError } from '../tables/errors';
 import { TableDirector } from '../tables/table-director';
 import type { TableMessage, TableRuntime } from '../tables/table-runtime';
@@ -61,6 +62,7 @@ export class TableGateway
   constructor(
     private readonly director: TableDirector,
     @Inject(IDENTITY) private readonly identity: IdentityPort,
+    @Inject(ACCOUNTS) private readonly accounts: AccountPort,
     @Inject(TABLE_SETTINGS) settings: TableSettings,
   ) {
     this.limiter = new SocketRateLimiter(settings.socketRateLimitPerSec, () => Date.now());
@@ -76,8 +78,19 @@ export class TableGateway
             next(new Error('UNAUTHORIZED'));
             return;
           }
-          (socket.data as SocketData).identity = identity;
-          next();
+          // The account (and its daily refill) is ready before the connection accepts commands.
+          this.prepareAccount(identity).then(
+            () => {
+              (socket.data as SocketData).identity = identity;
+              next();
+            },
+            (error: unknown) => {
+              this.logError('account setup failed', error);
+              const rejection = new Error('INTERNAL') as Error & { data?: SocketError };
+              rejection.data = socketError('INTERNAL', 'Internal error');
+              next(rejection);
+            },
+          );
         },
         (error: unknown) => {
           this.logError('authentication failed', error);
@@ -85,6 +98,11 @@ export class TableGateway
         },
       );
     });
+  }
+
+  private async prepareAccount(identity: Identity): Promise<void> {
+    await this.accounts.ensureAccount(identity.userId);
+    await this.accounts.applyDailyRefill(identity.userId, new Date());
   }
 
   /** Nest calls this from an RxJS subscribe: a throw would become an uncaught exception. */
@@ -285,8 +303,17 @@ export class TableGateway
   private deliver(userId: string, message: TableMessage): void {
     const socket = this.sockets.get(userId);
     if (!socket) return;
-    if (message.type === 'update') socket.emit(SOCKET_EVENTS.tableUpdate, message.update);
-    else socket.emit(SOCKET_EVENTS.tableClosed, message.closed);
+    switch (message.type) {
+      case 'update':
+        socket.emit(SOCKET_EVENTS.tableUpdate, message.update);
+        break;
+      case 'closed':
+        socket.emit(SOCKET_EVENTS.tableClosed, message.closed);
+        break;
+      case 'degraded':
+        socket.emit(SOCKET_EVENTS.tableDegraded, message.degraded);
+        break;
+    }
   }
 
   /** Logs the error's name, message and stack only. */

@@ -1,0 +1,137 @@
+// Phase 3b data model (spec §2). CHECK constraints, the partial unique index on the ledger
+// and row level security are added by hand in the migration SQL (Prisma cannot model them).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LedgerReason {
+  initial
+  daily_refill
+  buy_in
+  cash_out
+  recovery_cash_out
+  bot_buy_in
+  bot_cash_out
+
+  @@map("ledger_reason")
+}
+
+model Profile {
+  id        String   @id @default(uuid()) @db.Uuid
+  devHandle String?  @unique @map("dev_handle")
+  nickname  String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  wallet Wallet?
+  ledger ChipLedger[]
+  seats  Seat[]
+
+  @@map("profiles")
+}
+
+model Wallet {
+  userId            String    @id @map("user_id") @db.Uuid
+  balance           BigInt
+  lastDailyRefillAt DateTime? @map("last_daily_refill_at") @db.Timestamptz(3)
+
+  profile Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+model ChipLedger {
+  id             String       @id @default(uuid()) @db.Uuid
+  /// NULL = the house (bot bankroll).
+  userId         String?      @map("user_id") @db.Uuid
+  delta          BigInt
+  /// NULL for house entries.
+  balanceAfter   BigInt?      @map("balance_after")
+  reason         LedgerReason
+  tableId        String?      @map("table_id") @db.Uuid
+  handId         String?      @map("hand_id") @db.Uuid
+  idempotencyKey String?      @map("idempotency_key")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  profile Profile? @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@map("chip_ledger")
+}
+
+model PokerTable {
+  id         String    @id @default(uuid()) @db.Uuid
+  status     String
+  maxSeats   Int       @map("max_seats")
+  smallBlind BigInt    @map("small_blind")
+  bigBlind   BigInt    @map("big_blind")
+  minBuyIn   BigInt    @map("min_buy_in")
+  maxBuyIn   BigInt    @map("max_buy_in")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  closedAt   DateTime? @map("closed_at") @db.Timestamptz(3)
+
+  seats Seat[]
+  hands Hand[]
+
+  @@map("tables")
+}
+
+model Seat {
+  id        String   @id @default(uuid()) @db.Uuid
+  tableId   String   @map("table_id") @db.Uuid
+  seatIndex Int      @map("seat_index")
+  userId    String?  @map("user_id") @db.Uuid
+  botName   String?  @map("bot_name")
+  stack     BigInt
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  table   PokerTable @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  profile Profile?   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tableId, seatIndex])
+  @@index([userId])
+  @@map("seats")
+}
+
+model Hand {
+  id         String    @id @default(uuid()) @db.Uuid
+  tableId    String    @map("table_id") @db.Uuid
+  handNumber Int       @map("hand_number")
+  /// 'settled' | 'voided'
+  status     String
+  buttonSeat Int       @map("button_seat")
+  board      Json
+  awards     Json
+  /// Only cards shown at showdown (invariant 4).
+  shownHands Json      @map("shown_hands")
+  settledAt  DateTime? @map("settled_at") @db.Timestamptz(3)
+
+  table   PokerTable   @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  actions HandAction[]
+
+  @@unique([tableId, handNumber])
+  @@map("hands")
+}
+
+model HandAction {
+  id        String  @id @default(uuid()) @db.Uuid
+  handId    String  @map("hand_id") @db.Uuid
+  seq       Int
+  seatIndex Int     @map("seat_index")
+  street    String
+  type      String
+  amount    BigInt?
+
+  hand Hand @relation(fields: [handId], references: [id], onDelete: Cascade)
+
+  @@unique([handId, seq])
+  @@map("hand_actions")
+}

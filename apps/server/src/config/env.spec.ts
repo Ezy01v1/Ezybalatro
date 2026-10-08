@@ -7,6 +7,7 @@ describe('validateEnv', () => {
       NODE_ENV: 'development',
       PORT: 3000,
       CORS_ORIGINS: [],
+      DATABASE_POOL_MAX: 5,
       TABLE_SMALL_BLIND: 10,
       TABLE_BIG_BLIND: 20,
       TABLE_MIN_BUY_IN: 400,
@@ -18,7 +19,8 @@ describe('validateEnv', () => {
       SITTING_OUT_MAX_MS: 300000,
       BETWEEN_HANDS_MS: 3000,
       EMPTY_TABLE_CLOSE_MS: 60000,
-      DEV_WALLET_INITIAL: 10000,
+      CHIPS_INITIAL: 10000,
+      CHIPS_DAILY_REFILL_TO: 2000,
       SOCKET_RATE_LIMIT_PER_SEC: 10,
       BOT_DELAY_MIN_MS: 800,
       BOT_DELAY_MAX_MS: 2500,
@@ -59,6 +61,29 @@ describe('validateEnv', () => {
 
   it('rejects bot delay min above max', () => {
     expect(() => validateEnv({ BOT_DELAY_MIN_MS: '3000' })).toThrow(/BOT_DELAY_MIN_MS/);
+  });
+
+  it('DATABASE_POOL_MAX defaults to 5 and must be at least 1', () => {
+    expect(validateEnv({}).DATABASE_POOL_MAX).toBe(5);
+    expect(validateEnv({ DATABASE_POOL_MAX: '3' }).DATABASE_POOL_MAX).toBe(3);
+    expect(() => validateEnv({ DATABASE_POOL_MAX: '0' })).toThrow(/DATABASE_POOL_MAX/);
+  });
+
+  it('DATABASE_URL and DIRECT_URL are optional outside production', () => {
+    const env = validateEnv({ NODE_ENV: 'development' });
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.DIRECT_URL).toBeUndefined();
+    expect(validateEnv({ DATABASE_URL: 'postgresql://u:p@h:5432/db' }).DATABASE_URL).toBe(
+      'postgresql://u:p@h:5432/db',
+    );
+  });
+
+  it('requires DATABASE_URL in production without echoing any value', () => {
+    expect(() => validateEnv({ NODE_ENV: 'production' })).toThrow(/DATABASE_URL: required in production/);
+    expect(() => validateEnv({ NODE_ENV: 'production', DATABASE_URL: '' })).toThrow(/DATABASE_URL/);
+    expect(validateEnv({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://x/y' }).NODE_ENV).toBe(
+      'production',
+    );
   });
 });
 

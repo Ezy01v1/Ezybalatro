@@ -39,7 +39,7 @@ export function tableSettingsFromEnv(env: Env): TableSettings {
     botFillTarget: env.TABLE_BOT_FILL_TARGET,
     emptyTableCloseMs: env.EMPTY_TABLE_CLOSE_MS,
     botDelayMs: { min: env.BOT_DELAY_MIN_MS, max: env.BOT_DELAY_MAX_MS },
-    devWalletInitial: env.DEV_WALLET_INITIAL,
+    devWalletInitial: env.CHIPS_INITIAL,
     socketRateLimitPerSec: env.SOCKET_RATE_LIMIT_PER_SEC,
   };
 }

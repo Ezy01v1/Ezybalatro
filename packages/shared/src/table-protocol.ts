@@ -53,4 +53,10 @@ export interface TableClosed {
   reason: TableClosedReason;
 }
 
+/** `degraded: true` while the last hand could not be saved: no new hand starts until it is. */
+export interface TableDegraded {
+  tableId: string;
+  degraded: boolean;
+}
+
 export type Ack<T extends object = object> = ({ ok: true } & T) | { ok: false; error: SocketError };

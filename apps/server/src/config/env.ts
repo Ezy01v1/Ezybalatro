@@ -30,10 +30,16 @@ export const envSchema = z
     SITTING_OUT_MAX_MS: int(300000).pipe(z.number().min(0)),
     BETWEEN_HANDS_MS: int(3000).pipe(z.number().min(0)),
     EMPTY_TABLE_CLOSE_MS: int(60000).pipe(z.number().min(0)),
-    DEV_WALLET_INITIAL: int(10000).pipe(z.number().min(0)),
+    CHIPS_INITIAL: int(10000).pipe(z.number().min(0)),
+    CHIPS_DAILY_REFILL_TO: int(2000).pipe(z.number().min(0)),
     SOCKET_RATE_LIMIT_PER_SEC: int(10).pipe(z.number().min(1)),
     BOT_DELAY_MIN_MS: int(800).pipe(z.number().min(0)),
     BOT_DELAY_MAX_MS: int(2500).pipe(z.number().min(0)),
+    // Connection strings: never echoed in errors or logs. Empty counts as missing.
+    DATABASE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+    DIRECT_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+    // Max connections of the app's pg pool (Supabase free tier has few pooler connections).
+    DATABASE_POOL_MAX: int(5).pipe(z.number().min(1)),
   })
   .superRefine((env, ctx) => {
     const fail = (path: string, message: string) =>
@@ -49,6 +55,9 @@ export const envSchema = z
     }
     if (env.TABLE_BOT_FILL_TARGET > env.TABLE_MAX_SEATS) {
       fail('TABLE_BOT_FILL_TARGET', 'must not exceed TABLE_MAX_SEATS');
+    }
+    if (env.NODE_ENV === 'production' && !env.DATABASE_URL) {
+      fail('DATABASE_URL', 'required in production');
     }
     if (env.BOT_DELAY_MIN_MS > env.BOT_DELAY_MAX_MS) {
       fail('BOT_DELAY_MIN_MS', 'must not exceed BOT_DELAY_MAX_MS');

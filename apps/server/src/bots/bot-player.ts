@@ -72,6 +72,7 @@ export class BotPlayer {
       this.stop();
       return;
     }
+    if (message.type === 'degraded') return;
     const update = message.update;
     if (update.events.some((e) => e.type === 'playerLeft' && e.playerId === this.playerId)) {
       this.stop();

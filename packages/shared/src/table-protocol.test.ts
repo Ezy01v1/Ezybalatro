@@ -80,6 +80,7 @@ describe('table protocol', () => {
     expect(SOCKET_EVENTS.ping).toBe('ping');
     expect(SOCKET_EVENTS.quickSeat).toBe('table:quickSeat');
     expect(SOCKET_EVENTS.tableUpdate).toBe('table:update');
+    expect(SOCKET_EVENTS.tableDegraded).toBe('table:degraded');
     expect(SOCKET_EVENTS.sessionReplaced).toBe('session:replaced');
   });
 });

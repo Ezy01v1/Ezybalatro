@@ -25,3 +25,6 @@ Thumbs.db
 .idea/
 npm-debug.log*
 pnpm-debug.log*
+# Prisma generated client and embedded Postgres data (apps/server)
+apps/server/src/generated/
+apps/server/.local-db/

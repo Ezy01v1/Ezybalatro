@@ -9,8 +9,7 @@ import {
   type LegalActions,
 } from '@naipes/engine';
 import type { PlayerAction } from '@naipes/shared';
-import { HouseBankroll, InMemoryWallet } from './in-memory-wallet';
-import type { WalletPort } from './ports';
+import { InMemoryTableStore } from './in-memory-table-store';
 import { TableRuntime, isBotId, type TableHooks, type TableMessage } from './table-runtime';
 import {
   TEST_CONFIG,
@@ -45,11 +44,12 @@ describe('TableRuntime', () => {
   describe('sit', () => {
     it('debits the wallet on sit and refunds when the reducer rejects', async () => {
       const h = makeRuntime();
-      const debit = jest.spyOn(h.wallet, 'debit');
+      const sitDown = jest.spyOn(h.store, 'sitDown');
+      const standUp = jest.spyOn(h.store, 'standUp');
 
       const ok = await h.runtime.sit('p0', 1000);
       expect(ok).toEqual({ ok: true, seat: 0 });
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
       expect(h.runtime.stackOf('p0')).toBe(1000);
 
       const rejected = await h.runtime.sit('p1', 5000); // above maxBuyIn
@@ -57,8 +57,15 @@ describe('TableRuntime', () => {
         ok: false,
         error: expect.objectContaining({ type: 'error', code: 'INVALID_AMOUNT' }),
       });
-      expect(debit).toHaveBeenCalledWith('p1', 5000);
-      expect(await h.wallet.balance('p1')).toBe(TEST_WALLET_INITIAL);
+      expect(sitDown).toHaveBeenCalledWith({ tableId: 't1', seat: 1, playerId: 'p1', buyIn: 5000 });
+      expect(standUp).toHaveBeenCalledWith({
+        tableId: 't1',
+        seat: 1,
+        playerId: 'p1',
+        cashOut: 5000,
+      });
+      expect(h.store.seatRows('t1')).toEqual([{ seat: 0, playerId: 'p0', stack: 1000 }]);
+      expect(await h.store.balance('p1')).toBe(TEST_WALLET_INITIAL);
       expect(h.runtime.seatOf('p1')).toBeNull();
       expect(h.runtime.seq).toBe(1);
     });
@@ -66,7 +73,7 @@ describe('TableRuntime', () => {
     it('rejects a second sit of the same player without touching the wallet', async () => {
       const h = makeRuntime();
       await h.runtime.sit('p0', 1000);
-      const debit = jest.spyOn(h.wallet, 'debit');
+      const debit = jest.spyOn(h.store, 'sitDown');
       const again = await h.runtime.sit('p0', 1000);
       expect(again.ok).toBe(false);
       if (!again.ok) expect(again.error.code).toBe('INVALID_ACTION');
@@ -75,7 +82,7 @@ describe('TableRuntime', () => {
 
     it('rejects a non-integer buy-in without touching the wallet', async () => {
       const h = makeRuntime();
-      const debit = jest.spyOn(h.wallet, 'debit');
+      const debit = jest.spyOn(h.store, 'sitDown');
       const result = await h.runtime.sit('p0', 500.5);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe('INVALID_AMOUNT');
@@ -83,11 +90,11 @@ describe('TableRuntime', () => {
     });
 
     it('answers INSUFFICIENT_CHIPS when the wallet is short', async () => {
-      const h = makeRuntime({ wallet: new InMemoryWallet(300) });
+      const h = makeRuntime({ store: new InMemoryTableStore({ initial: 300 }) });
       const result = await h.runtime.sit('p0', 400);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe('INSUFFICIENT_CHIPS');
-      expect(await h.wallet.balance('p0')).toBe(300);
+      expect(await h.store.balance('p0')).toBe(300);
       expect(h.runtime.playerCount()).toBe(0);
     });
 
@@ -98,7 +105,7 @@ describe('TableRuntime', () => {
       expect(a).toEqual({ ok: true, seat: 1 });
       expect(b.ok).toBe(false);
       if (!b.ok) expect(b.error.code).toBe('TABLE_FULL');
-      expect(await h.wallet.balance('p2')).toBe(TEST_WALLET_INITIAL);
+      expect(await h.store.balance('p2')).toBe(TEST_WALLET_INITIAL);
       expect(h.runtime.hasFreeSeat()).toBe(false);
     });
 
@@ -108,8 +115,8 @@ describe('TableRuntime', () => {
       expect(isBotId('dev:ana')).toBe(false);
       await h.runtime.sit('bot:Tano', 2000);
       await h.runtime.sit('dev:ana', 500);
-      expect(h.house.outstanding).toBe(2000);
-      expect(h.wallet.total()).toBe(TEST_WALLET_INITIAL - 500);
+      expect(h.store.houseOutstanding()).toBe(2000);
+      expect(h.store.total()).toBe(TEST_WALLET_INITIAL - 500);
       expect(h.runtime.humanCount()).toBe(1);
       expect(h.runtime.playerCount()).toBe(2);
       expect(h.runtime.playerIds()).toEqual(['bot:Tano', 'dev:ana']);
@@ -304,7 +311,7 @@ describe('TableRuntime', () => {
       await join(h, 'p0', 800);
       const result = await h.runtime.leave('p0');
       expect(result).toEqual({ ok: true, cashOut: 800 });
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL);
       expect(h.runtime.seatOf('p0')).toBeNull();
       expect(h.runtime.chipsOnTable()).toBe(0);
       const left = ofType(eventsOf(h, 'p0'), 'playerLeft');
@@ -315,23 +322,12 @@ describe('TableRuntime', () => {
       const h = makeRuntime();
       await h.runtime.sit('bot:Maru', 1500);
       await h.runtime.leave('bot:Maru');
-      expect(h.house.outstanding).toBe(0);
+      expect(h.store.houseOutstanding()).toBe(0);
     });
 
-    it('logs a failing credit and still completes the leave without touching the hand', async () => {
-      class FlakyWallet extends InMemoryWallet {
-        failNextCredit = false;
-        override async credit(userId: string, amount: number): Promise<void> {
-          if (this.failNextCredit) {
-            this.failNextCredit = false;
-            throw new Error('credit boom');
-          }
-          return super.credit(userId, amount);
-        }
-      }
-      const wallet = new FlakyWallet(TEST_WALLET_INITIAL);
+    it('a failing standUp keeps a player not dealt in seated, without touching the hand', async () => {
       const hooks = { playerLeft: jest.fn(), changed: jest.fn() };
-      const h = makeRuntime({ wallet, hooks });
+      const h = makeRuntime({ hooks });
       await join(h, 'p0');
       await join(h, 'p1');
       await join(h, 'p2');
@@ -342,27 +338,26 @@ describe('TableRuntime', () => {
       const changedCalls = hooks.changed.mock.calls.length;
       const p2Count = h.messages.get('p2')!.length;
 
-      wallet.failNextCredit = true;
+      h.store.failNext('standUp');
       const result = await h.runtime.leave('p2');
 
-      expect(result).toEqual({ ok: true, cashOut: 1000 });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe('INTERNAL');
       expect(h.logger.error).toHaveBeenCalledTimes(1);
-      expect(h.runtime.seq).toBe(seq + 1);
-      for (const id of ['p0', 'p1', 'p2']) {
-        expect(ofType(eventsOf(h, id), 'playerLeft')).toEqual([
-          expect.objectContaining({ playerId: 'p2', cashOut: 1000 }),
-        ]);
-      }
-      expect(hooks.playerLeft).toHaveBeenCalledWith(h.runtime, 'p2', 1000);
-      expect(hooks.changed).toHaveBeenCalledTimes(changedCalls + 1);
-      expect(h.messages.get('p2')).toHaveLength(p2Count + 1);
-      expect(await wallet.balance('p2')).toBe(TEST_WALLET_INITIAL - 1000); // lost, logged
+      expect(h.runtime.seq).toBe(seq);
+      expect(h.runtime.seatOf('p2')).toBe(2);
+      expect(hooks.playerLeft).not.toHaveBeenCalled();
+      expect(hooks.changed).toHaveBeenCalledTimes(changedCalls);
+      expect(h.messages.get('p2')).toHaveLength(p2Count);
+      expect(await h.store.balance('p2')).toBe(TEST_WALLET_INITIAL - 1000);
       // The hand in progress is untouched and the table stays healthy.
       expect(ofType(eventsOf(h, 'p0'), 'handVoided')).toHaveLength(0);
       expect(h.runtime.status).toBe('running');
-      expect(h.runtime.chipsOnTable()).toBe(2000);
+      expect(h.runtime.chipsOnTable()).toBe(3000);
       expect((await h.runtime.act('p0', h.runtime.seq, { type: 'call' })).ok).toBe(true);
-      expect(h.messages.get('p2')).toHaveLength(p2Count + 1); // unsubscribed
+      // A second try goes through.
+      expect(await h.runtime.leave('p2')).toEqual({ ok: true, cashOut: 1000 });
+      expect(await h.store.balance('p2')).toBe(TEST_WALLET_INITIAL);
       expect(h.logger.error).toHaveBeenCalledTimes(1);
     });
 
@@ -373,7 +368,7 @@ describe('TableRuntime', () => {
       const leave = await h.runtime.leave('p0');
       expect(leave).toEqual({ ok: true, cashOut: null });
       expect(h.runtime.seatOf('p0')).toBe(0);
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
       expect(ofType(eventsOf(h, 'p1'), 'playerActed').at(-1)?.action).not.toBe('fold');
 
       await h.runtime.act('p1', h.runtime.seq, { type: 'call' });
@@ -381,7 +376,7 @@ describe('TableRuntime', () => {
       const finalStack = settled.stacks.find((s) => s.seat === 0)!.stack;
       const left = ofType(eventsOf(h, 'p1'), 'playerLeft');
       expect(left).toEqual([expect.objectContaining({ playerId: 'p0', cashOut: finalStack })]);
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000 + finalStack);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000 + finalStack);
       expect(h.runtime.seatOf('p0')).toBeNull();
       // p0 got this last update, then was unsubscribed.
       expect(ofType(eventsOf(h, 'p0'), 'playerLeft')).toHaveLength(1);
@@ -471,9 +466,9 @@ describe('TableRuntime', () => {
       });
       expect(h.runtime.status).toBe('closed');
       expect(closed).toHaveBeenCalledWith(h.runtime);
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL);
-      expect(await h.wallet.balance('p1')).toBe(TEST_WALLET_INITIAL);
-      expect(h.house.outstanding).toBe(0);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL);
+      expect(await h.store.balance('p1')).toBe(TEST_WALLET_INITIAL);
+      expect(h.store.houseOutstanding()).toBe(0);
       expect(h.runtime.chipsOnTable()).toBe(0);
       expect(ofType(eventsOf(h, 'p1'), 'handVoided')).toHaveLength(0);
       const after = await h.runtime.act('p1', h.runtime.seq, { type: 'call' });
@@ -496,9 +491,9 @@ describe('TableRuntime', () => {
         type: 'closed',
         closed: { tableId: 't1', reason: 'shutdown' },
       });
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL);
-      expect(await h.wallet.balance('p1')).toBe(TEST_WALLET_INITIAL);
-      expect(h.house.outstanding).toBe(0);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL);
+      expect(await h.store.balance('p1')).toBe(TEST_WALLET_INITIAL);
+      expect(h.store.houseOutstanding()).toBe(0);
       expect(hooks.playerLeft).toHaveBeenCalledTimes(3);
       expect(hooks.closed).toHaveBeenCalledTimes(1);
       expect(h.runtime.status).toBe('closed');
@@ -536,25 +531,23 @@ describe('TableRuntime', () => {
         closed: { tableId: 't1', reason: 'empty' },
       });
       // Everybody cashed out: what the bots won from p0 is what the house is up.
-      expect(h.wallet.total() - h.house.outstanding).toBe(TEST_WALLET_INITIAL);
+      expect(h.store.total() - h.store.houseOutstanding()).toBe(TEST_WALLET_INITIAL);
       expect(h.runtime.chipsOnTable()).toBe(0);
       expect(await h.runtime.closeIfEmpty()).toBe(false); // already closed
     });
 
     it('closeIfEmpty does not close onto a human whose sit was queued first', async () => {
-      const real = new InMemoryWallet(TEST_WALLET_INITIAL);
       let release!: () => void;
       const gate = new Promise<void>((resolve) => (release = resolve));
-      const wallet: WalletPort = {
-        balance: (id) => real.balance(id),
-        // A slow debit (e.g. a DB round trip) keeps the sit in flight.
-        debit: async (id, amount) => {
-          await gate;
-          return real.debit(id, amount);
-        },
-        credit: (id, amount) => real.credit(id, amount),
-      };
-      const h = makeRuntime({ wallet });
+      // A slow sitDown (e.g. a DB round trip) keeps the sit in flight.
+      class SlowStore extends InMemoryTableStore {
+        override async sitDown(a: Parameters<InMemoryTableStore['sitDown']>[0]) {
+          if (!isBotId(a.playerId)) await gate;
+          return super.sitDown(a);
+        }
+      }
+      const store = new SlowStore({ initial: TEST_WALLET_INITIAL });
+      const h = makeRuntime({ store });
       await h.runtime.sit('bot:Tano', 1000);
       expect(h.runtime.humanCount()).toBe(0);
 
@@ -566,7 +559,7 @@ describe('TableRuntime', () => {
       expect(await closing).toBe(false);
       expect(h.runtime.status).not.toBe('closed');
       expect(h.runtime.humanCount()).toBe(1);
-      expect(await real.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
+      expect(await store.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
     });
   });
 
@@ -625,12 +618,10 @@ describe('TableRuntime', () => {
 
   describe('conservation', () => {
     it('keeps wallet + chipsOnTable + house.outstanding constant across 200 hands', async () => {
-      const wallet = new InMemoryWallet(TEST_WALLET_INITIAL);
-      const house = new HouseBankroll();
+      const store = new InMemoryTableStore({ initial: TEST_WALLET_INITIAL });
       let deckCount = 0;
       const h = makeRuntime({
-        wallet,
-        house,
+        store,
         deckSource: fixedDeckSource(() =>
           shuffleDeck(createSeededRng('conservation', `deck-${deckCount++}`), createStandardDeck()),
         ),
@@ -638,7 +629,7 @@ describe('TableRuntime', () => {
       const humans = ['p0', 'p1', 'p2', 'p3'];
       const players = [...humans, 'bot:Tano'];
       for (const id of players) await join(h, id);
-      const total = () => wallet.total() + h.runtime.chipsOnTable() - house.outstanding;
+      const total = () => store.total() + h.runtime.chipsOnTable() - store.houseOutstanding();
       const expected = TEST_WALLET_INITIAL * humans.length;
       expect(total()).toBe(expected);
 
@@ -658,6 +649,9 @@ describe('TableRuntime', () => {
       let rejoins = 0;
       const afterStep = async () => {
         expect(total()).toBe(expected);
+        // Between hands the store holds exactly the stacks on the table.
+        if (!h.runtime.isHandInProgress())
+          expect(store.seatedTotal()).toBe(h.runtime.chipsOnTable());
         const view = h.runtime.snapshot('').view;
         for (const seat of view.seats) {
           if (!seat) continue;
@@ -677,8 +671,7 @@ describe('TableRuntime', () => {
         }
         for (const id of players) {
           if (h.runtime.seatOf(id) !== null || pick(3) !== 0) continue;
-          const source = isBotId(id) ? house : wallet;
-          const buyIn = Math.min(1000, await source.balance(id));
+          const buyIn = Math.min(1000, await store.balance(id));
           if (buyIn >= 400) {
             await join(h, id, buyIn, pick(2) === 0);
             rejoins++;
@@ -696,7 +689,9 @@ describe('TableRuntime', () => {
       await h.runtime.close('shutdown');
       expect(h.runtime.chipsOnTable()).toBe(0);
       expect(h.runtime.playerCount()).toBe(0);
-      expect(wallet.total() - house.outstanding).toBe(expected);
+      expect(store.total() - store.houseOutstanding()).toBe(expected);
+      expect(store.seatedTotal()).toBe(0);
+      expect(store.persistedHands().length).toBeGreaterThanOrEqual(200);
     });
   });
 

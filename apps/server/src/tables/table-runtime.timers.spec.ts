@@ -202,13 +202,13 @@ describe('TableRuntime timers', () => {
       const h = makeRuntime({ hooks: { playerLeft } });
       await join(h, 'p0');
       await h.runtime.sitOut('p0');
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL - 1000);
 
       await h.scheduler.advance(sittingOutMaxMs - 1);
       expect(h.runtime.seatOf('p0')).toBe(0);
       await h.scheduler.advance(1);
       expect(h.runtime.seatOf('p0')).toBeNull();
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL);
       expect(playerLeft).toHaveBeenCalledWith(h.runtime, 'p0', 1000);
       expect(ofType(eventsOf(h, 'p0'), 'playerLeft')).toEqual([
         { type: 'playerLeft', seat: 0, playerId: 'p0', cashOut: 1000 },
@@ -227,7 +227,7 @@ describe('TableRuntime timers', () => {
       expect(h.runtime.seatOf('p0')).toBe(0);
       await h.scheduler.advance(1);
       expect(h.runtime.seatOf('p0')).toBeNull();
-      expect(await h.wallet.balance('p0')).toBe(TEST_WALLET_INITIAL - 10);
+      expect(await h.store.balance('p0')).toBe(TEST_WALLET_INITIAL - 10);
       expect(h.runtime.seatOf('p1')).toBe(1); // p1 never sat out
     });
 
@@ -318,7 +318,7 @@ describe('TableRuntime timers', () => {
       await h.scheduler.advance(sittingOutMaxMs);
       expect(h.logger.warn).not.toHaveBeenCalled();
       expect(h.logger.error).not.toHaveBeenCalled();
-      expect(h.wallet.total()).toBe(3 * TEST_WALLET_INITIAL);
+      expect(h.store.total()).toBe(3 * TEST_WALLET_INITIAL);
     });
   });
 });

@@ -1,6 +1,6 @@
 import { createStandardDeck, type Card, type LegalActions, type TableConfig } from '@naipes/engine';
 import type { PlayerAction } from '@naipes/shared';
-import { HouseBankroll, InMemoryWallet } from '../in-memory-wallet';
+import { InMemoryTableStore } from '../in-memory-table-store';
 import type { DeckSource, TableLogger } from '../ports';
 import type { TableTimings } from '../table-settings';
 import { TableRuntime, type TableMessage, type TableRuntimeDeps } from '../table-runtime';
@@ -36,8 +36,7 @@ export interface TestLogger extends TableLogger {
 export interface Harness<R extends TableRuntime = TableRuntime> {
   runtime: R;
   scheduler: FakeScheduler;
-  wallet: InMemoryWallet;
-  house: HouseBankroll;
+  store: InMemoryTableStore;
   logger: TestLogger;
   /** Messages received by each player subscribed through `join` or `listen`. */
   messages: Map<string, TableMessage[]>;
@@ -48,9 +47,9 @@ export function makeRuntime<R extends TableRuntime = TableRuntime>(
   Ctor?: new (deps: TableRuntimeDeps) => R,
 ): Harness<R> {
   const scheduler = (overrides.scheduler as FakeScheduler | undefined) ?? new FakeScheduler();
-  const wallet =
-    (overrides.wallet as InMemoryWallet | undefined) ?? new InMemoryWallet(TEST_WALLET_INITIAL);
-  const house = (overrides.house as HouseBankroll | undefined) ?? new HouseBankroll();
+  const store =
+    (overrides.store as InMemoryTableStore | undefined) ??
+    new InMemoryTableStore({ initial: TEST_WALLET_INITIAL });
   const logger: TestLogger = { warn: jest.fn(), error: jest.fn() };
   const deps: TableRuntimeDeps = {
     id: 't1',
@@ -60,15 +59,13 @@ export function makeRuntime<R extends TableRuntime = TableRuntime>(
     logger,
     ...overrides,
     scheduler,
-    wallet,
-    house,
+    store,
   };
   const runtime = Ctor ? new Ctor(deps) : (new TableRuntime(deps) as R);
   return {
     runtime,
     scheduler,
-    wallet,
-    house,
+    store,
     logger: deps.logger as TestLogger,
     messages: new Map(),
   };

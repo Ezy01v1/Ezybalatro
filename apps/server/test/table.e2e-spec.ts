@@ -5,8 +5,9 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { SOCKET_EVENTS, type Ack, type PlayerAction, type TableUpdate } from '@naipes/shared';
 import { io, type Socket } from 'socket.io-client';
-import { AppModule } from '../src/app.module';
+import type { TestDatabase } from '../src/db/testing/test-database';
 import { setupApp } from '../src/setup-app';
+import { loadAppModule, startE2eDatabase } from './test-database-env';
 
 /** Everything a client got: server events and the acks of its own messages (`ack:<event>`). */
 interface Received {
@@ -222,6 +223,7 @@ const BOTH_DEALT_TIMEOUT_MS = 20_000;
 describe('Table gateway (e2e)', () => {
   let app: INestApplication | null = null;
   let url: string;
+  let db: TestDatabase;
 
   async function closeAll(): Promise<void> {
     for (const client of clients.splice(0)) client.socket.disconnect();
@@ -240,9 +242,14 @@ describe('Table gateway (e2e)', () => {
     return { player, tableId: ack.tableId, seat: ack.seat };
   }
 
-  // A fresh app per test: tables, wallets and quick-seat choices never leak between tests.
+  beforeAll(async () => {
+    db = await startE2eDatabase();
+  });
+
+  // A fresh app and an empty database per test: tables, wallets and quick-seat choices never leak.
   beforeEach(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    await db.reset();
+    const moduleRef = await Test.createTestingModule({ imports: [await loadAppModule()] }).compile();
     app = moduleRef.createNestApplication();
     setupApp(app);
     await app.listen(0, '127.0.0.1');
@@ -250,7 +257,10 @@ describe('Table gateway (e2e)', () => {
   });
 
   afterEach(closeAll);
-  afterAll(closeAll);
+  afterAll(async () => {
+    await closeAll();
+    await db?.stop();
+  });
 
   it('rejects a handshake without a valid token', async () => {
     for (const auth of [{}, { token: 'dev:x' }, { token: 'ana' }, { token: 42 }]) {

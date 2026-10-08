@@ -40,12 +40,16 @@ export function chipsOnTable(state: TableState): number {
  * What each seated player gets back if the table is torn down without the reducer: the stack at the
  * start of the hand in progress for players dealt in, the current stack for everybody else.
  */
-export function refundsFromState(state: TableState): { playerId: string; amount: number }[] {
+export function refundsFromState(
+  state: TableState,
+): { playerId: string; seat: number; cashOut: number }[] {
   const hand = isHandInProgress(state.hand) ? state.hand : null;
   return state.seats.flatMap((seat, index) => {
     if (!seat) return [];
     const starting = hand?.startingStacks.find((s) => s.seat === index);
-    return [{ playerId: seat.playerId, amount: starting ? starting.stack : seat.stack }];
+    return [
+      { playerId: seat.playerId, seat: index, cashOut: starting ? starting.stack : seat.stack },
+    ];
   });
 }
 

@@ -2,15 +2,18 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { io, type Socket } from 'socket.io-client';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
+import type { TestDatabase } from '../src/db/testing/test-database';
 import { setupApp } from '../src/setup-app';
+import { loadAppModule, startE2eDatabase } from './test-database-env';
 
 describe('App (e2e)', () => {
   let app: INestApplication;
   let url: string;
+  let db: TestDatabase;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    db = await startE2eDatabase();
+    const moduleRef = await Test.createTestingModule({ imports: [await loadAppModule()] }).compile();
     app = moduleRef.createNestApplication();
     setupApp(app);
     await app.listen(0, '127.0.0.1');
@@ -18,7 +21,8 @@ describe('App (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
+    await db?.stop();
   });
 
   it('GET /health -> 200 { status: ok }', async () => {

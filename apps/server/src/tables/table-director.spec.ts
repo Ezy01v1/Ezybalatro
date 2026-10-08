@@ -8,8 +8,7 @@ import {
   type Rng,
 } from '@naipes/engine';
 import type { PlayerAction, TableClosed } from '@naipes/shared';
-import { HouseBankroll, InMemoryWallet } from './in-memory-wallet';
-import type { WalletPort } from './ports';
+import { InMemoryTableStore } from './in-memory-table-store';
 import { TableDirector, type DirectorDeps } from './table-director';
 import { isBotId, type TableRuntime } from './table-runtime';
 import type { TableSettings } from './table-settings';
@@ -35,8 +34,9 @@ const SETTINGS: TableSettings = {
 function makeDirector(overrides: Partial<TableSettings> = {}, deps: Partial<DirectorDeps> = {}) {
   const settings: TableSettings = { ...SETTINGS, ...overrides };
   const scheduler = new FakeScheduler();
-  const wallet = new InMemoryWallet(settings.devWalletInitial);
-  const house = new HouseBankroll();
+  const store =
+    (deps.store as InMemoryTableStore | undefined) ??
+    new InMemoryTableStore({ initial: settings.devWalletInitial });
   const logger: TestLogger = { warn: jest.fn(), error: jest.fn() };
   const deckRng = createSeededRng('director-deck');
   let tables = 0;
@@ -44,14 +44,14 @@ function makeDirector(overrides: Partial<TableSettings> = {}, deps: Partial<Dire
     settings,
     scheduler,
     deckSource: { nextDeck: () => shuffleDeck(deckRng, createStandardDeck()) },
-    wallet,
-    house,
     logger,
     botRng: createSeededRng('director-bots'),
     newTableId: () => `t${++tables}`,
     ...deps,
+    store,
   });
-  return { director, scheduler, wallet, house, logger, settings };
+  // `wallet` and `house` read the same store (kept apart for readability).
+  return { director, scheduler, store, wallet: store, house: store, logger, settings };
 }
 
 type Choose = (legal: LegalActions) => PlayerAction;
@@ -71,7 +71,7 @@ function observe(table: TableRuntime) {
   const closed: TableClosed[] = [];
   table.subscribe('observer', (m) => {
     if (m.type === 'update') events.push(...m.update.events);
-    else closed.push(m.closed);
+    else if (m.type === 'closed') closed.push(m.closed);
   });
   return { events, closed };
 }
@@ -107,7 +107,7 @@ describe('TableDirector', () => {
     // No buy-in given: min(maxBuyIn, balance).
     expect(table.stackOf('alice')).toBe(TEST_CONFIG.maxBuyIn);
     expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL - TEST_CONFIG.maxBuyIn);
-    expect(house.outstanding).toBe(3 * TEST_CONFIG.maxBuyIn);
+    expect(house.houseOutstanding()).toBe(3 * TEST_CONFIG.maxBuyIn);
 
     // The bots play: a hand starts and is acted on without any human input but alice's.
     drive(table, 'alice');
@@ -202,7 +202,7 @@ describe('TableDirector', () => {
     const table = director.get('t1')!;
     expect(table.playerCount()).toBe(SETTINGS.botFillTarget);
     expect(botsAt(table)).toHaveLength(2);
-    expect(house.outstanding).toBe(2 * TEST_CONFIG.maxBuyIn);
+    expect(house.houseOutstanding()).toBe(2 * TEST_CONFIG.maxBuyIn);
   });
 
   it('INSUFFICIENT_CHIPS without creating a table when the wallet is short', async () => {
@@ -241,14 +241,16 @@ describe('TableDirector', () => {
   });
 
   it('closes the new table when the human cannot sit on it', async () => {
-    const real = new InMemoryWallet(TEST_WALLET_INITIAL);
     // The balance looks fine but the debit fails (e.g. a concurrent spend).
-    const wallet: WalletPort = {
-      balance: (id) => real.balance(id),
-      debit: async () => false,
-      credit: (id, amount) => real.credit(id, amount),
-    };
-    const { director, house } = makeDirector({}, { wallet });
+    class ShortStore extends InMemoryTableStore {
+      override async sitDown() {
+        return 'insufficient' as const;
+      }
+    }
+    const { director, house } = makeDirector(
+      {},
+      { store: new ShortStore({ initial: TEST_WALLET_INITIAL }) },
+    );
 
     const result = await director.quickSeat('alice');
 
@@ -258,21 +260,84 @@ describe('TableDirector', () => {
     });
     expect(director.tables()).toHaveLength(0);
     expect(director.get('t1')).toBeNull();
-    expect(house.outstanding).toBe(0);
+    expect(house.houseOutstanding()).toBe(0);
+  });
+
+  it('opens each table in the store before seating and closes it there', async () => {
+    const { director, store, scheduler } = makeDirector({ emptyTableCloseMs: 1000 });
+    await seat(director, 'alice');
+    expect(store.tableStatus('t1')).toBe('open');
+    await director.get('t1')!.leave('alice');
+    await scheduler.advance(1000);
+    await scheduler.flush();
+    expect(director.tables()).toHaveLength(0);
+    expect(store.tableStatus('t1')).toBe('closed');
+    expect(store.seatRows('t1')).toEqual([]);
+  });
+
+  it('a candidate table whose openTable fails is skipped, not joined', async () => {
+    let rejectOpen!: (e: Error) => void;
+    class GatedStore extends InMemoryTableStore {
+      override openTable(id: string, config: Parameters<InMemoryTableStore['openTable']>[1]) {
+        if (id !== 't1') return super.openTable(id, config);
+        return new Promise<void>((_, reject) => (rejectOpen = reject));
+      }
+    }
+    const store = new GatedStore({ initial: TEST_WALLET_INITIAL });
+    const { director } = makeDirector({}, { store });
+    const alice = director.quickSeat('alice');
+    await Promise.resolve();
+    await new Promise<void>((r) => setImmediate(r));
+    const bob = director.quickSeat('bob'); // t1 is a candidate, still opening
+    await new Promise<void>((r) => setImmediate(r));
+    rejectOpen(new Error('db down'));
+    expect(await alice).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: 'INTERNAL' }),
+    });
+    expect(await bob).toEqual({ ok: true, tableId: 't2', seat: 0 });
+    expect(director.get('t1')).toBeNull();
+    expect(store.seatRows('t1')).toEqual([]);
+  });
+
+  it('a failing openTable is INTERNAL and leaves no table behind', async () => {
+    const store = new InMemoryTableStore({ initial: TEST_WALLET_INITIAL });
+    store.failNext('openTable');
+    const { director } = makeDirector({}, { store });
+    expect(await director.quickSeat('alice')).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: 'INTERNAL' }),
+    });
+    expect(director.tables()).toHaveLength(0);
+    expect(await store.balance('alice')).toBe(TEST_WALLET_INITIAL);
+    expect(await director.quickSeat('alice')).toEqual({ ok: true, tableId: 't2', seat: 0 });
+  });
+
+  it('a degraded table takes no quick seat', async () => {
+    const { director, store, scheduler } = makeDirector();
+    await seat(director, 'alice');
+    const table = director.get('t1')!;
+    drive(table, 'alice');
+    store.failNext('persistHand', 1000);
+    await scheduler.advance(TEST_TIMINGS.betweenHandsMs);
+    for (let i = 0; i < 200 && !table.degraded; i++) await scheduler.advance(1000);
+    expect(table.degraded).toBe(true);
+    const bob = await director.quickSeat('bob');
+    expect(bob).toEqual({ ok: true, tableId: 't2', seat: 0 });
   });
 
   it('a failing wallet becomes an INTERNAL error, not a rejection', async () => {
-    const real = new InMemoryWallet(TEST_WALLET_INITIAL);
     let down = true;
-    const wallet: WalletPort = {
-      balance: async (id) => {
+    class DownStore extends InMemoryTableStore {
+      override async balance(id: string) {
         if (down) throw new Error('wallet unavailable');
-        return real.balance(id);
-      },
-      debit: (id, amount) => real.debit(id, amount),
-      credit: (id, amount) => real.credit(id, amount),
-    };
-    const { director, logger } = makeDirector({}, { wallet });
+        return super.balance(id);
+      }
+    }
+    const { director, logger } = makeDirector(
+      {},
+      { store: new DownStore({ initial: TEST_WALLET_INITIAL }) },
+    );
 
     expect(await director.quickSeat('alice')).toEqual({
       ok: false,
@@ -387,7 +452,7 @@ describe('TableDirector', () => {
       .filter((e) => e.type === 'playerSat' && isBotId(e.playerId));
     expect(satAfter.length).toBeGreaterThanOrEqual(1);
     expect(table.playerCount()).toBeGreaterThanOrEqual(2);
-    expect(wallet.total() + table.chipsOnTable() - house.outstanding).toBe(1_000_000);
+    expect(wallet.total() + table.chipsOnTable() - house.houseOutstanding()).toBe(1_000_000);
     expect(logger.error).not.toHaveBeenCalled();
   });
 
@@ -418,7 +483,7 @@ describe('TableDirector', () => {
     expect(closed).toEqual([{ tableId: 't1', reason: 'empty' }]);
     expect(director.tables()).toHaveLength(0);
     expect(director.get('t1')).toBeNull();
-    expect(house.outstanding).toBe(0);
+    expect(house.houseOutstanding()).toBe(0);
     expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
     expect(scheduler.pendingCount()).toBe(0);
     expect(logger.error).not.toHaveBeenCalled();
@@ -442,19 +507,19 @@ describe('TableDirector', () => {
 
   it('the empty-table close does not close onto a human whose sit is in flight', async () => {
     const emptyTableCloseMs = 20_000;
-    const real = new InMemoryWallet(TEST_WALLET_INITIAL);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
-    const wallet: WalletPort = {
-      balance: (id) => real.balance(id),
-      // Bob's debit is slow (e.g. a DB round trip): his sit is queued when the timer fires.
-      debit: async (id, amount) => {
-        if (id === 'bob') await gate;
-        return real.debit(id, amount);
-      },
-      credit: (id, amount) => real.credit(id, amount),
-    };
-    const { director, scheduler, logger } = makeDirector({ emptyTableCloseMs }, { wallet });
+    // Bob's sitDown is slow (e.g. a DB round trip): his sit is queued when the timer fires.
+    class SlowStore extends InMemoryTableStore {
+      override async sitDown(a: Parameters<InMemoryTableStore['sitDown']>[0]) {
+        if (a.playerId === 'bob') await gate;
+        return super.sitDown(a);
+      }
+    }
+    const { director, scheduler, logger } = makeDirector(
+      { emptyTableCloseMs },
+      { store: new SlowStore({ initial: TEST_WALLET_INITIAL }) },
+    );
     await seat(director, 'alice');
     const table = director.get('t1')!;
     await table.leave('alice');
@@ -495,7 +560,7 @@ describe('TableDirector', () => {
     expect(closed).toEqual([{ tableId: 't1', reason: 'shutdown' }]);
     expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
     expect(await wallet.balance('bob')).toBe(TEST_WALLET_INITIAL);
-    expect(house.outstanding).toBe(0);
+    expect(house.houseOutstanding()).toBe(0);
     expect(director.tables()).toHaveLength(0);
     expect(director.tableOf('alice')).toBeNull();
     expect(scheduler.pendingCount()).toBe(0);
@@ -533,7 +598,7 @@ describe('TableDirector', () => {
 
     const conserved = () => {
       const onTables = director.tables().reduce((sum, t) => sum + t.chipsOnTable(), 0);
-      expect(wallet.total() + onTables - house.outstanding).toBe(
+      expect(wallet.total() + onTables - house.houseOutstanding()).toBe(
         SETTINGS.devWalletInitial * users.size,
       );
     };
@@ -594,7 +659,7 @@ describe('TableDirector', () => {
     expect(sawTwoTables).toBe(true);
     // Everybody left: every table closed after emptyTableCloseMs.
     expect(director.tables()).toHaveLength(0);
-    expect(wallet.total() - house.outstanding).toBe(SETTINGS.devWalletInitial * 8);
+    expect(wallet.total() - house.houseOutstanding()).toBe(SETTINGS.devWalletInitial * 8);
     expect(logger.error).not.toHaveBeenCalled();
   });
 });

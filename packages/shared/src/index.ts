@@ -47,6 +47,7 @@ export const SOCKET_EVENTS = {
   sync: 'table:sync',
   tableUpdate: 'table:update',
   tableClosed: 'table:closed',
+  tableDegraded: 'table:degraded',
   sessionReplaced: 'session:replaced',
 } as const;
 
