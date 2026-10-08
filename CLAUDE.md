@@ -51,6 +51,7 @@ Todos se corren desde la raíz. Requisitos: Node 24 (`.nvmrc`) y pnpm 10 (`packa
 - Instalar: `pnpm install`
 - Dev móvil: `pnpm dev:mobile` (Expo; escanea el QR desde Expo Go). Por Wi‑Fi el Firewall de Windows bloquea el puerto 8081; lo que funciona es el cable USB: `adb reverse tcp:8081 tcp:8081` y luego `adb shell am start -a android.intent.action.VIEW -d exp://127.0.0.1:8081 host.exp.exponent` (adb en `%LOCALAPPDATA%\Android\Sdk\platform-tools`). Dispositivo de prueba: Samsung Galaxy A56.
 - Dev servidor: `pnpm dev:server` (copia `apps/server/.env.example` a `apps/server/.env`)
+- Cliente de consola de la mesa (con el servidor corriendo): `pnpm play -- --name <nombre>` (opciones `--url`, `--buy-in`; comandos `f k c b<n> r<n> a sitout sitin leave q`). Server y cliente en terminales distintas. En PowerShell, otro puerto se fija con `$env:PORT = '3111'; pnpm dev:server` y `--url http://localhost:3111` (en este equipo el 3000 suele estar ocupado). Más adelante el teléfono llegará al servidor de la PC por USB con `adb reverse tcp:3000 tcp:3000`.
 - Lint: `pnpm lint`
 - Typecheck: `pnpm typecheck` (compila antes `packages/*`)
 - Tests: `pnpm test` (todo) · `pnpm test:engine` (cobertura: `pnpm --filter @naipes/engine test:coverage`) · `pnpm test:server` (unit + e2e) · `pnpm test:mobile` · e2e móvil con Maestro: `maestro test apps/mobile/.maestro/` (requiere el CLI de Maestro y el teléfono por USB con Expo Go)
@@ -160,8 +161,9 @@ Notas del esqueleto:
 - **Hecho:** Fase 1 (engine), en `main`: cartas, `SeededRng` (sfc32 + cyrb128, sub-streams por propósito), evaluador Hold'em (5 de 7) y del roguelike (1–5 cartas), reducer de Hold'em NL (`holdemReducer`, `legalActions`, `viewFor`, botes laterales), scoring del roguelike con comodines como datos + hooks, y reducer de la run con log reproducible (`createRun`/`runReducer`/`replayRun`). El mazo de cada mano de Hold'em entra barajado en la acción `postBlinds` (lo baraja el server con CSPRNG).
 - **Hecho:** reglas de Hold'em validadas por el usuario (ADR 0008): dead button y muck de perdedores implementados.
 - **Hecho:** Fase 2 (roguelike jugable), en `main`: diseño aprobado (dirección B "Gran Salón", `docs/design/fase2-roguelike-diseno.md`), contenido del MVP como datos en el engine (20 comodines, 5 jefes, estudios para subir de nivel, tienda con renovar de costo creciente y venta, economía), números ajustados con `pnpm sim:balance` (bot codicioso: ~8 % de victorias, mediana nivel 5), app móvil con Zustand sobre el reducer del engine, guardado con `expo-sqlite/kv-store`, semilla visible y jugar con semilla, animaciones Reanimated, gestos, háptica y sonidos originales CC0. Probado en el Galaxy A56 (2026-10-04, Expo Go, bundle de desarrollo, pantalla a 120 Hz): flujo completo semilla → jugar → ciega superada → tienda → comprar → arrastrar comodines → perder → fin de run con semilla, y "Continuar run" tras cerrar la app. Frames: p50 11 ms, p95 14–15 ms, p99 19–23 ms, ~4 % de frames tarde. Pendiente: correr el flujo de Maestro (`apps/mobile/.maestro/roguelike-first-blind.yaml`, validado a mano en el teléfono; Maestro requiere Java 17+) y medir con un build de producción.
+- **Hecho:** Fase 3a, en `main`: mesa Hold'em en tiempo real sin BD (gateway Socket.IO con identidad de desarrollo y rate limit, mesas en memoria con cola de comandos, timers de turno/desconexión/sitting out, barajado CSPRNG, bots con heurística del engine, mesa rápida con relleno de bots, cliente de consola `pnpm play`). Protocolo en `docs/protocol.md`; spec y plan en `docs/superpowers/`. Probada a mano por el usuario (2026-10-07) contra bots.
 - **En curso:** —
-- **Siguiente:** Fase 3 (servidor del Modo Mesa).
+- **Siguiente:** Fase 3b (persistencia y fichas: Supabase + Prisma, wallets, ledger).
 - **Deuda técnica conocida:**
   - Roguelike: mejoras de carta existen en el pipeline pero aún no hay forma de obtenerlas; consumibles solo "subir nivel de mano" (se aplican al comprar, sin inventario).
   - Los palos de las cartas se dibujan en SVG (`SuitIcon`): Android dibuja ♥/♦ de texto con la fuente de emoji (siempre rojos). En textos se usa U+FE0E.
@@ -169,4 +171,7 @@ Notas del esqueleto:
   - Los tests e2e del server tardan ~30 s (probablemente por el cierre del socket); revisar.
   - Swagger/OpenAPI todavía no está montado (se agrega con el primer endpoint REST real).
   - Logs estructurados (pino + requestId) y `helmet` pendientes para antes de exponer el server.
-  - `docs/protocol.md` se crea en la Fase 3.
+  - El wallet de fichas y el bankroll de la casa (bots) son en memoria: se pierden al reiniciar el server (se persisten en la 3b).
+  - Identidad solo de desarrollo (`dev:<nombre>`, sin producción): auth real con Supabase en la 3c.
+  - Un crédito al wallet que falla hoy solo se loguea y esas fichas se pierden: la 3b debe garantizar que no se pierdan (outbox/reintento con asiento en el ledger).
+  - La identidad de desarrollo depende de `NODE_ENV` (por defecto `development`): un deploy sin `NODE_ENV=production` aceptaría `dev:<cualquiera>`. En 3c/3d hacerla opt-in explícito o eliminarla.

@@ -1,0 +1,23 @@
+/** Display names for bots: original Spanish names, letters only (bot ids are `bot:<Name>`). */
+export const BOT_NAMES: readonly string[] = [
+  'Rocio',
+  'Tano',
+  'Maru',
+  'Lucho',
+  'Pilar',
+  'Nacho',
+  'Zoila',
+  'Beto',
+  'Carola',
+  'Dante',
+  'Elvira',
+  'Fabio',
+  'Gaby',
+  'Hugo',
+  'Irma',
+  'Joaquin',
+  'Karina',
+  'Leandro',
+  'Mabel',
+  'Octavio',
+];

@@ -33,7 +33,8 @@ describe('App (e2e)', () => {
   });
 
   it('socket "ping" -> pong ack', async () => {
-    const socket: Socket = io(url, { transports: ['websocket'] });
+    // Every connection is authenticated (TableGateway middleware on the shared server).
+    const socket: Socket = io(url, { transports: ['websocket'], auth: { token: 'dev:pinger' } });
     try {
       const reply: unknown = await socket.timeout(5000).emitWithAck('ping');
       expect(reply).toMatchObject({ type: 'pong', serverTime: expect.any(Number) });

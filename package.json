@@ -19,6 +19,7 @@
     "test:server": "pnpm build:packages && pnpm --filter @naipes/server test",
     "test:mobile": "pnpm build:packages && pnpm --filter @naipes/mobile test",
     "export:mobile": "pnpm --filter @naipes/mobile export",
+    "play": "pnpm build:packages && pnpm --filter @naipes/server build && node apps/server/dist/src/dev-client/play.js",
     "format": "prettier --write ."
   },
   "devDependencies": {

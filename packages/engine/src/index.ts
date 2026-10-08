@@ -29,6 +29,10 @@ export type { Contribution } from './holdem/pots';
 export { buildPots, splitPot } from './holdem/pots';
 export type { HandPlayerView, HandView, SeatView, TableView } from './holdem/view';
 export { viewFor } from './holdem/view';
+export type { BotPersonality, BotProfile } from './bots/personalities';
+export { BOT_PERSONALITIES, BOT_PERSONALITY_IDS } from './bots/personalities';
+export { postflopStrength, preflopStrength } from './bots/strength';
+export { decideBotAction } from './bots/decide';
 export type * from './roguelike/types';
 export {
   BOSSES,

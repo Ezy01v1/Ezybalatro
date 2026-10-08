@@ -1,8 +1,28 @@
 import { validateEnv } from './env';
+import { tableSettingsFromEnv } from '../tables/table-settings';
 
 describe('validateEnv', () => {
   it('applies defaults', () => {
-    expect(validateEnv({})).toEqual({ NODE_ENV: 'development', PORT: 3000, CORS_ORIGINS: [] });
+    expect(validateEnv({})).toEqual({
+      NODE_ENV: 'development',
+      PORT: 3000,
+      CORS_ORIGINS: [],
+      TABLE_SMALL_BLIND: 10,
+      TABLE_BIG_BLIND: 20,
+      TABLE_MIN_BUY_IN: 400,
+      TABLE_MAX_BUY_IN: 2000,
+      TABLE_MAX_SEATS: 6,
+      TABLE_BOT_FILL_TARGET: 4,
+      TURN_TIMEOUT_MS: 20000,
+      DISCONNECT_GRACE_MS: 45000,
+      SITTING_OUT_MAX_MS: 300000,
+      BETWEEN_HANDS_MS: 3000,
+      EMPTY_TABLE_CLOSE_MS: 60000,
+      DEV_WALLET_INITIAL: 10000,
+      SOCKET_RATE_LIMIT_PER_SEC: 10,
+      BOT_DELAY_MIN_MS: 800,
+      BOT_DELAY_MAX_MS: 2500,
+    });
   });
 
   it('parses a comma-separated CORS allowlist', () => {
@@ -14,5 +34,49 @@ describe('validateEnv', () => {
 
   it('fails fast on invalid values', () => {
     expect(() => validateEnv({ PORT: 'abc' })).toThrow(/PORT/);
+  });
+
+  it('rejects equal blinds', () => {
+    expect(() => validateEnv({ TABLE_SMALL_BLIND: '20', TABLE_BIG_BLIND: '20' })).toThrow(
+      /TABLE_SMALL_BLIND/,
+    );
+  });
+
+  it('rejects min buy-in above max buy-in', () => {
+    expect(() => validateEnv({ TABLE_MIN_BUY_IN: '3000' })).toThrow(/TABLE_MIN_BUY_IN/);
+  });
+
+  it('rejects seats outside 2..6', () => {
+    expect(() => validateEnv({ TABLE_MAX_SEATS: '7' })).toThrow(/TABLE_MAX_SEATS/);
+    expect(() => validateEnv({ TABLE_MAX_SEATS: '1' })).toThrow(/TABLE_MAX_SEATS/);
+  });
+
+  it('rejects bot fill target above max seats', () => {
+    expect(() => validateEnv({ TABLE_MAX_SEATS: '3', TABLE_BOT_FILL_TARGET: '4' })).toThrow(
+      /TABLE_BOT_FILL_TARGET/,
+    );
+  });
+
+  it('rejects bot delay min above max', () => {
+    expect(() => validateEnv({ BOT_DELAY_MIN_MS: '3000' })).toThrow(/BOT_DELAY_MIN_MS/);
+  });
+});
+
+describe('tableSettingsFromEnv', () => {
+  it('maps env to settings', () => {
+    expect(tableSettingsFromEnv(validateEnv({}))).toEqual({
+      config: { maxSeats: 6, smallBlind: 10, bigBlind: 20, minBuyIn: 400, maxBuyIn: 2000 },
+      timings: {
+        turnTimeoutMs: 20000,
+        disconnectGraceMs: 45000,
+        sittingOutMaxMs: 300000,
+        betweenHandsMs: 3000,
+      },
+      botFillTarget: 4,
+      emptyTableCloseMs: 60000,
+      botDelayMs: { min: 800, max: 2500 },
+      devWalletInitial: 10000,
+      socketRateLimitPerSec: 10,
+    });
   });
 });

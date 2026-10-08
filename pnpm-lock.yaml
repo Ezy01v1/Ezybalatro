@@ -177,6 +177,9 @@ importers:
       rxjs:
         specifier: ^7.8.2
         version: 7.8.2
+      socket.io:
+        specifier: ^4.8.3
+        version: 4.8.3
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -223,6 +226,9 @@ importers:
 
   packages/shared:
     dependencies:
+      '@naipes/engine':
+        specifier: workspace:*
+        version: link:../engine
       zod:
         specifier: ^4.6.5
         version: 4.6.5

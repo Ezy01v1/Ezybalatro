@@ -17,6 +17,14 @@ export const socketErrorCodeSchema = z.enum([
   'STALE_SEQ',
   'INVALID_MESSAGE',
   'INTERNAL',
+  'INVALID_ACTION',
+  'NOT_AT_TABLE',
+  'INSUFFICIENT_CHIPS',
+  'TABLE_CLOSED',
+  'TABLE_FULL',
+  'SESSION_REPLACED',
+  'UNAUTHORIZED',
+  'RATE_LIMITED',
 ]);
 export type SocketErrorCode = z.infer<typeof socketErrorCodeSchema>;
 
@@ -31,6 +39,15 @@ export const SOCKET_EVENTS = {
   ping: 'ping',
   pong: 'pong',
   error: 'error',
+  quickSeat: 'table:quickSeat',
+  act: 'table:act',
+  sitOut: 'table:sitOut',
+  sitIn: 'table:sitIn',
+  leave: 'table:leave',
+  sync: 'table:sync',
+  tableUpdate: 'table:update',
+  tableClosed: 'table:closed',
+  sessionReplaced: 'session:replaced',
 } as const;
 
 export const pongSchema = z.object({ type: z.literal('pong'), serverTime: z.number().int() });
@@ -38,3 +55,5 @@ export type Pong = z.infer<typeof pongSchema>;
 
 export const healthResponseSchema = z.object({ status: z.literal('ok') });
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
+
+export * from './table-protocol';

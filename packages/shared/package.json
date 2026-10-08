@@ -24,6 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@naipes/engine": "workspace:*",
     "zod": "^4.6.5"
   }
 }
