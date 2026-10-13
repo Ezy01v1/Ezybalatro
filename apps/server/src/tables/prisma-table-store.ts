@@ -35,8 +35,7 @@ export class PrismaTableStore implements TableStore {
   async balance(playerId: string): Promise<number> {
     if (isBotId(playerId)) return Number.MAX_SAFE_INTEGER;
     const rows = await this.prisma.$queryRaw<{ balance: bigint }[]>`
-      SELECT w.balance FROM wallets w JOIN profiles p ON p.id = w.user_id
-      WHERE p.dev_handle = ${playerId}`;
+      SELECT w.balance FROM wallets w WHERE w.user_id = ${playerId}::uuid`;
     const row = rows[0];
     if (!row) throw new Error(`No profile/wallet for ${playerId}`);
     return toNumber(row.balance);
@@ -76,6 +75,10 @@ export class PrismaTableStore implements TableStore {
         return 'ok';
       }
       const userId = await this.userId(tx, a.playerId);
+      // Lock the profile: a deleted account (or one being deleted) never buys in.
+      const profile = await tx.$queryRaw<{ deleted: boolean }[]>`
+        SELECT deleted_at IS NOT NULL AS deleted FROM profiles WHERE id = ${userId}::uuid FOR SHARE`;
+      if (profile[0]?.deleted !== false) return 'deleted';
       const rows = await tx.$queryRaw<{ balance: bigint }[]>`
         UPDATE wallets SET balance = balance - ${amount}
         WHERE user_id = ${userId}::uuid AND balance >= ${amount}
@@ -153,9 +156,9 @@ export class PrismaTableStore implements TableStore {
 
   // ------------------------------------------------------------ internals
 
-  /** Programming error when missing: accounts are created on connect. */
+  /** Humans are identified by `profiles.id`. Programming error when missing: accounts are created on connect. */
   private async userId(tx: Tx, playerId: string): Promise<string> {
-    const profile = await tx.profile.findUnique({ where: { devHandle: playerId }, select: { id: true } });
+    const profile = await tx.profile.findUnique({ where: { id: playerId }, select: { id: true } });
     if (!profile) throw new Error(`No profile for ${playerId}`);
     return profile.id;
   }

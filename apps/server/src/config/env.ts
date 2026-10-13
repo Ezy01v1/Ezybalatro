@@ -40,6 +40,17 @@ export const envSchema = z
     DIRECT_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
     // Max connections of the app's pg pool (Supabase free tier has few pooler connections).
     DATABASE_POOL_MAX: int(5).pipe(z.number().min(1)),
+    // Supabase project URL (https://<ref>.supabase.co): issuer and JWKS of the access tokens.
+    SUPABASE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url().optional()),
+    // Supabase secret key (server only): deletes Auth users on account deletion. Never logged.
+    SUPABASE_SECRET_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+    // Minimum level of the JSON logs (pino).
+    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+    // Accept `dev:<name>` identities on the table socket (never in production).
+    DEV_IDENTITY: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
   })
   .superRefine((env, ctx) => {
     const fail = (path: string, message: string) =>
@@ -58,6 +69,18 @@ export const envSchema = z
     }
     if (env.NODE_ENV === 'production' && !env.DATABASE_URL) {
       fail('DATABASE_URL', 'required in production');
+    }
+    if (env.NODE_ENV === 'production' && env.DEV_IDENTITY) {
+      fail('DEV_IDENTITY', 'must not be true in production');
+    }
+    if (!env.SUPABASE_URL && !(env.DEV_IDENTITY && env.NODE_ENV !== 'production')) {
+      fail('SUPABASE_URL', 'required unless DEV_IDENTITY=true outside production');
+    }
+    if (env.NODE_ENV === 'production' && env.SUPABASE_URL && !env.SUPABASE_URL.startsWith('https://')) {
+      fail('SUPABASE_URL', 'must be https in production');
+    }
+    if (env.NODE_ENV === 'production' && !env.SUPABASE_SECRET_KEY) {
+      fail('SUPABASE_SECRET_KEY', 'required in production');
     }
     if (env.BOT_DELAY_MIN_MS > env.BOT_DELAY_MAX_MS) {
       fail('BOT_DELAY_MIN_MS', 'must not exceed BOT_DELAY_MAX_MS');

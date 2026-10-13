@@ -40,7 +40,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 /**
  * Global chip audit (spec §2). Throws when:
  * (a) a wallet balance differs from the sum of its ledger deltas, or
- * (b) Σ wallets + Σ seat stacks ≠ Σ user (initial + daily_refill) deltas − Σ house deltas.
+ * (b) Σ wallets + Σ seat stacks ≠ Σ user (initial + daily_refill) deltas − Σ account_deleted outflows − Σ house deltas.
  */
 export async function auditChips(prisma: PrismaClient): Promise<void> {
   const mismatched = await prisma.$queryRaw<{ user_id: string; balance: bigint; ledger: bigint }[]>`
@@ -53,30 +53,37 @@ export async function auditChips(prisma: PrismaClient): Promise<void> {
     throw new Error(`chip audit (a) failed, wallet balance differs from ledger: ${detail}`);
   }
 
-  const [row] = await prisma.$queryRaw<{ held: bigint; minted: bigint; house: bigint }[]>`
+  const [row] = await prisma.$queryRaw<{ held: bigint; minted: bigint; deleted: bigint; house: bigint }[]>`
     SELECT
       (SELECT COALESCE(SUM(balance), 0) FROM wallets)::bigint + (SELECT COALESCE(SUM(stack), 0) FROM seats)::bigint AS held,
       (SELECT COALESCE(SUM(delta), 0) FROM chip_ledger
         WHERE user_id IS NOT NULL AND reason IN ('initial', 'daily_refill'))::bigint AS minted,
+      (SELECT COALESCE(SUM(-delta), 0) FROM chip_ledger
+        WHERE user_id IS NOT NULL AND reason = 'account_deleted')::bigint AS deleted,
       (SELECT COALESCE(SUM(delta), 0) FROM chip_ledger WHERE user_id IS NULL)::bigint AS house`;
-  const totals = row ?? { held: 0n, minted: 0n, house: 0n };
-  const expected = totals.minted - totals.house;
+  const totals = row ?? { held: 0n, minted: 0n, deleted: 0n, house: 0n };
+  const expected = totals.minted - totals.deleted - totals.house;
   if (totals.held !== expected) {
     throw new Error(
       `chip audit (b) failed, conservation broken: wallets + stacks = ${totals.held}, expected ${expected} ` +
-        `(minted ${totals.minted}, house ${totals.house})`,
+        `(minted ${totals.minted}, deleted ${totals.deleted}, house ${totals.house})`,
     );
   }
 }
 
 /**
  * Creates a profile with a wallet of `balance` chips, ledgered as `initial` so `auditChips` holds.
- * Test-only stand-in for `AccountService`.
+ * Test-only stand-in for `AccountService`; `id` fixes the `profiles.id` (the player id at tables).
  */
-export async function seedProfile(prisma: PrismaClient, devHandle: string, balance: number): Promise<string> {
+export async function seedProfile(
+  prisma: PrismaClient,
+  devHandle: string,
+  balance: number,
+  id?: string,
+): Promise<string> {
   const amount = BigInt(balance);
   const profile = await prisma.profile.create({
-    data: { devHandle, nickname: devHandle.replace(/^dev:/, ''), wallet: { create: { balance: amount } } },
+    data: { ...(id ? { id } : {}), devHandle, nickname: devHandle.replace(/^dev:/, ''), wallet: { create: { balance: amount } } },
   });
   if (amount !== 0n) {
     await prisma.chipLedger.create({

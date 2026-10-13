@@ -9,4 +9,5 @@ Object.assign(process.env, {
   TURN_TIMEOUT_MS: '3000',
   DISCONNECT_GRACE_MS: '1000',
   EMPTY_TABLE_CLOSE_MS: '500',
+  LOG_LEVEL: 'warn',
 });

@@ -17,6 +17,8 @@ export interface DirectorDeps {
   /** Bot names and personalities. */
   botRng: Rng;
   newTableId: () => string;
+  /** Current nickname of a human player, for the `names` of every `table:update`. */
+  nameOf?: (playerId: string) => string | undefined;
 }
 
 export type QuickSeatResult = Ack<{ tableId: string; seat: number }>;
@@ -60,6 +62,10 @@ export class TableDirector {
   /** In-flight quick seats: concurrent calls of the same user share one. */
   private readonly pending = new Map<string, Promise<QuickSeatResult>>();
   private shuttingDown = false;
+  /** Users being evicted or already evicted (deleted accounts): quick seat rejects them. */
+  private readonly evicted = new Set<string>();
+  /** Called whenever a seat is freed or a table closes (evictions waiting for a seat to go). */
+  private readonly seatWatchers = new Set<() => void>();
 
   constructor(private readonly deps: DirectorDeps) {}
 
@@ -85,6 +91,9 @@ export class TableDirector {
    * new table. Idempotent for a user who is already seated. On error no table is left behind.
    */
   quickSeat(userId: string, buyIn?: number): Promise<QuickSeatResult> {
+    if (this.evicted.has(userId)) {
+      return Promise.resolve(fail(socketError('UNAUTHORIZED', 'Account being deleted')));
+    }
     const inFlight = this.pending.get(userId);
     if (inFlight) return inFlight;
     const attempt = this.seat(userId, buyIn)
@@ -95,6 +104,52 @@ export class TableDirector {
       .finally(() => this.pending.delete(userId));
     this.pending.set(userId, attempt);
     return attempt;
+  }
+
+  /**
+   * Account deletion (spec §5): from now on quick seat rejects the user; a quick seat already in
+   * flight is awaited, then the user leaves every table (normal cash-out; mid-hand they leave when
+   * the hand is saved). `done` once no table holds them; `busy` if that takes longer than
+   * `timeoutMs` (the user may quick seat again). After `done` the user stays out (`release` undoes it).
+   */
+  async evict(userId: string, timeoutMs = 30_000): Promise<'done' | 'busy'> {
+    this.evicted.add(userId);
+    let expired = false;
+    let wake: () => void = () => undefined;
+    const timer = this.deps.scheduler.schedule(timeoutMs, () => {
+      expired = true;
+      wake();
+    });
+    const watcher = () => wake();
+    this.seatWatchers.add(watcher);
+    try {
+      const inFlight = this.pending.get(userId);
+      if (inFlight) await inFlight;
+      for (;;) {
+        const holding = this.tables().filter((t) => t.status !== 'closed' && t.seatOf(userId) !== null);
+        if (holding.length === 0) return 'done';
+        if (expired) {
+          this.evicted.delete(userId);
+          return 'busy';
+        }
+        const changed = new Promise<void>((resolve) => (wake = resolve));
+        for (const table of holding) {
+          // Already `leaving` is fine: the seat goes when the hand is saved.
+          if (!table.isLeavePending(userId)) await table.leave(userId);
+        }
+        if (this.tables().some((t) => t.status !== 'closed' && t.seatOf(userId) !== null) && !expired) {
+          await changed;
+        }
+      }
+    } finally {
+      timer.cancel();
+      this.seatWatchers.delete(watcher);
+    }
+  }
+
+  /** Lets an evicted user quick seat again (the deletion that evicted them did not happen). */
+  release(userId: string): void {
+    this.evicted.delete(userId);
   }
 
   /** No new hand starts anywhere; then every table is closed (hands voided, everybody cashed out). */
@@ -221,6 +276,7 @@ export class TableDirector {
       store,
       logger,
       hooks,
+      nameOf: this.deps.nameOf,
     });
     const entry: TableEntry = {
       runtime,
@@ -247,6 +303,11 @@ export class TableDirector {
       this.seats.delete(playerId);
     }
     if (table.status !== 'closed' && !table.isHandInProgress()) void this.rebalance(entry);
+    this.notifySeatWatchers();
+  }
+
+  private notifySeatWatchers(): void {
+    for (const watcher of [...this.seatWatchers]) watcher();
   }
 
   /** With no human seated the table closes after `emptyTableCloseMs`; a human sitting cancels it. */
@@ -286,6 +347,7 @@ export class TableDirector {
     this.deps.store
       .closeTable(table.id)
       .catch((error: unknown) => this.logError(`table ${table.id}: closeTable failed`, error));
+    this.notifySeatWatchers();
   }
 
   // ------------------------------------------------------------ bots

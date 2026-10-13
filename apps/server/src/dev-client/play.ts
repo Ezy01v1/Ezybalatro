@@ -1,8 +1,10 @@
 /**
- * Developer console client of the Hold'em table (`pnpm play -- --name ana`). Not part of the app:
+ * Developer console client of the Hold'em table (`pnpm play -- --guest` or `-- --name ana`). Not part of the app:
  * `main.ts` never imports it. User-facing text is Spanish (es-419).
  */
 import { createInterface } from 'node:readline';
+import { join } from 'node:path';
+import { createClient } from '@supabase/supabase-js';
 import { io } from 'socket.io-client';
 import {
   SOCKET_EVENTS,
@@ -13,52 +15,62 @@ import {
 } from '@naipes/shared';
 import { connectErrorAction, disconnectAction } from './connection-policy';
 import { HELP_TEXT, parseCommand } from './parse-command';
+import { guestConfig, parsePlayArgs, type PlayOptions } from './guest-session';
 import { renderTable } from './render';
 
-interface Options {
-  name: string;
-  url: string;
-  buyIn: number | undefined;
+function loadEnv(): Record<string, string | undefined> {
+  try {
+    // apps/server/.env (dist/src/dev-client → ../../../.env); optional.
+    process.loadEnvFile(join(__dirname, '..', '..', '..', '.env'));
+  } catch {
+    /* no .env: rely on the process environment */
+  }
+  return process.env;
 }
 
-function parseArgs(argv: string[]): Options | { error: string } {
-  const values = new Map<string, string>();
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    if (!arg.startsWith('--')) continue;
-    const [key, inline] = arg.slice(2).split('=', 2) as [string, string | undefined];
-    const value = inline ?? argv[++i];
-    if (value === undefined) return { error: `Falta el valor de --${key}` };
-    values.set(key, value);
+/** Anonymous Supabase sign-in; the access token is only handed to the socket, never printed. */
+async function guestSignIn(): Promise<string> {
+  const config = guestConfig(loadEnv());
+  if ('error' in config) {
+    console.error(config.error);
+    process.exit(2);
   }
-  const name = values.get('name');
-  if (!name || !/^[A-Za-z0-9_]{3,20}$/.test(name)) {
-    return {
-      error:
-        'Uso: pnpm play -- --name <nombre> [--url http://localhost:3000] [--buy-in 1000]\n--name: 3 a 20 caracteres (letras, números o _)',
-    };
+  const supabase = createClient(config.supabaseUrl, config.publishableKey, {
+    auth: { persistSession: false },
+  });
+  const { data, error } = await supabase.auth.signInAnonymously();
+  if (error || !data.session) {
+    console.error(
+      `No se pudo crear la cuenta de invitado: ${error?.message ?? 'sin sesión'}
+` +
+        '(¿está activado "Allow anonymous sign-ins" en Supabase?)',
+    );
+    process.exit(1);
   }
-  const buyInText = values.get('buy-in');
-  const buyIn = buyInText === undefined ? undefined : Number(buyInText);
-  if (buyIn !== undefined && !(Number.isSafeInteger(buyIn) && buyIn > 0)) {
-    return { error: '--buy-in debe ser un entero positivo' };
-  }
-  return { name, url: values.get('url') ?? 'http://localhost:3000', buyIn };
+  return data.session.access_token;
 }
 
-const parsed = parseArgs(process.argv.slice(2));
-if ('error' in parsed) {
-  console.error(parsed.error);
-  process.exit(2);
+async function main(): Promise<void> {
+  const parsed = parsePlayArgs(process.argv.slice(2));
+  if ('error' in parsed) {
+    console.error(parsed.error);
+    process.exit(2);
+  }
+  const token = parsed.mode.kind === 'guest' ? await guestSignIn() : `dev:${parsed.mode.name}`;
+  run(parsed, token);
 }
-const { name, url, buyIn } = parsed;
-const me = `dev:${name}`;
 
+void main();
+
+function run(options: PlayOptions, token: string): void {
+const { url, buyIn } = options;
 const CLEAR = '\x1b[2J\x1b[H';
 
 /** Latest update per table, with its arrival time (a user can briefly get updates for two tables). */
 const latest = new Map<string, { update: TableUpdate; at: number }>();
 let currentTableId: string | null = null;
+/** Own seat (from the quick-seat ack): the own player id (`profiles.id`) is read from the view. */
+let mySeat: number | null = null;
 let notice: string | null = null;
 let seating = false;
 let leaving = false;
@@ -67,7 +79,7 @@ let everConnected = false;
 
 const socket = io(url, {
   transports: ['websocket'],
-  auth: { token: me },
+  auth: { token },
 });
 
 const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' });
@@ -76,9 +88,10 @@ function draw(): void {
   const entry = currentTableId ? latest.get(currentTableId) : undefined;
   let screen = CLEAR;
   if (entry) {
+    const me = mySeat === null ? '' : (entry.update.view.seats[mySeat]?.playerId ?? '');
     screen += renderTable(entry.update, me, Date.now() - entry.at) + '\n';
   } else {
-    screen += `Conectado como ${name}. Buscando mesa...\n`;
+    screen += 'Conectado. Buscando mesa...\n';
   }
   if (notice) screen += `\n${notice}\n`;
   screen += `\n${HELP_TEXT}\n`;
@@ -112,6 +125,7 @@ function quickSeat(): void {
       return;
     }
     currentTableId = ack.tableId;
+    mySeat = ack.seat;
     notice = null;
     draw();
   });
@@ -242,3 +256,4 @@ const clock = setInterval(() => {
   const entry = currentTableId ? latest.get(currentTableId) : undefined;
   if (entry?.update.turn) draw();
 }, 1000);
+}

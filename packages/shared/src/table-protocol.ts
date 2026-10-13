@@ -46,6 +46,8 @@ export interface TableUpdate {
   events: readonly HoldemEvent[];
   view: TableView;
   turn: { seat: number; endsInMs: number } | null;
+  /** Display names keyed by playerId (public information). */
+  names: Record<string, string>;
 }
 
 export interface TableClosed {

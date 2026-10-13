@@ -662,4 +662,74 @@ describe('TableDirector', () => {
     expect(wallet.total() - house.houseOutstanding()).toBe(SETTINGS.devWalletInitial * 8);
     expect(logger.error).not.toHaveBeenCalled();
   });
+
+  describe('evict (account deletion)', () => {
+    it('a user who is not seated is done right away and then kept out of quick seat', async () => {
+      const { director } = makeDirector();
+      expect(await director.evict('alice')).toBe('done');
+      const result = await director.quickSeat('alice');
+      expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'UNAUTHORIZED' }) });
+      expect(director.tables()).toHaveLength(0);
+    });
+
+    it('between hands: cashes out at once', async () => {
+      const { director, wallet, logger } = makeDirector({ botFillTarget: 1 });
+      await seat(director, 'alice');
+      expect(await director.evict('alice')).toBe('done');
+      expect(director.tableOf('alice')).toBeNull();
+      expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('mid-hand: waits until the hand is saved and the seat cashed out', async () => {
+      const { director, scheduler, wallet } = makeDirector();
+      await seat(director, 'alice');
+      const t1 = director.get('t1')!;
+      await scheduler.advance(TEST_TIMINGS.betweenHandsMs);
+      expect(t1.isHandInProgress()).toBe(true);
+
+      let outcome: string | null = null;
+      const evicted = director.evict('alice', 120_000).then((r) => (outcome = r));
+      await scheduler.flush();
+      expect(outcome).toBeNull();
+      expect(await director.quickSeat('alice')).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
+
+      while (outcome === null) await scheduler.advance(1000);
+      await evicted;
+      expect(outcome).toBe('done');
+      expect(t1.seatOf('alice')).toBeNull();
+      expect(director.tableOf('alice')).toBeNull();
+      expect(await wallet.balance('alice')).toBeGreaterThan(0);
+    });
+
+    it('busy when the hand does not end in time; quick seat works again afterwards', async () => {
+      const { director, scheduler } = makeDirector();
+      await seat(director, 'alice');
+      const t1 = director.get('t1')!;
+      await scheduler.advance(TEST_TIMINGS.betweenHandsMs);
+      expect(t1.isHandInProgress()).toBe(true);
+
+      const evicted = director.evict('alice', 1000);
+      await scheduler.advance(1000);
+      expect(await evicted).toBe('busy');
+      expect((await director.quickSeat('alice')).ok).toBe(true);
+    });
+
+    it('waits for a quick seat already in flight, then evicts the new seat', async () => {
+      const { director, wallet } = makeDirector({ botFillTarget: 1 });
+      const seating = director.quickSeat('alice');
+      const evicted = director.evict('alice');
+      expect((await seating).ok).toBe(true);
+      expect(await evicted).toBe('done');
+      expect(director.tables().some((t) => t.seatOf('alice') !== null)).toBe(false);
+      expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
+    });
+
+    it('two concurrent evictions both finish done', async () => {
+      const { director, wallet } = makeDirector({ botFillTarget: 1 });
+      await seat(director, 'alice');
+      expect(await Promise.all([director.evict('alice'), director.evict('alice')])).toEqual(['done', 'done']);
+      expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
+    });
+  });
 });

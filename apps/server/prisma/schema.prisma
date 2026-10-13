@@ -19,6 +19,7 @@ enum LedgerReason {
   recovery_cash_out
   bot_buy_in
   bot_cash_out
+  account_deleted
 
   @@map("ledger_reason")
 }
@@ -26,7 +27,11 @@ enum LedgerReason {
 model Profile {
   id        String   @id @default(uuid()) @db.Uuid
   devHandle String?  @unique @map("dev_handle")
-  nickname  String
+  nickname  String?
+  avatarId  String?  @map("avatar_id")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  /// The Supabase Auth user was deleted too (NULL with deleted_at set: retried at startup).
+  authDeletedAt DateTime? @map("auth_deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 

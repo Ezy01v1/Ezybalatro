@@ -707,4 +707,24 @@ describe('TableRuntime', () => {
       expect(h.runtime.hasFreeSeat()).toBe(true);
     });
   });
+
+  describe('names', () => {
+    it('sends the current nickname of each human and bot names without prefix', async () => {
+      const nicknames = new Map([['p0', 'Ana_1']]);
+      const h = makeRuntime({ nameOf: (id) => nicknames.get(id) });
+      await join(h, 'p0');
+      await join(h, 'bot:Tano');
+      const last = lastMessage(h, 'p0');
+      expect(last?.type === 'update' && last.update.names).toEqual({ p0: 'Ana_1', 'bot:Tano': 'Tano' });
+
+      nicknames.set('p0', 'Ana_2');
+      expect(h.runtime.snapshot('p0').names).toEqual({ p0: 'Ana_2', 'bot:Tano': 'Tano' });
+    });
+
+    it('leaves out humans without a known nickname', async () => {
+      const h = makeRuntime();
+      await join(h, 'p0');
+      expect(h.runtime.snapshot('p0').names).toEqual({});
+    });
+  });
 });

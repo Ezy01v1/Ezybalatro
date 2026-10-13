@@ -6,6 +6,9 @@ import { RecoveryService } from './recovery.service';
 
 const CONFIG = { maxSeats: 6, smallBlind: 10, bigBlind: 20, minBuyIn: 400, maxBuyIn: 2000 };
 
+const ANA_ID = '00000000-0000-4000-8000-00000000000a';
+const BEA_ID = '00000000-0000-4000-8000-0000000000be';
+
 describe('RecoveryService', () => {
   let db: TestDatabase;
 
@@ -22,10 +25,10 @@ describe('RecoveryService', () => {
   /** ana (1000 → buys 400) and a bot (500 from the house) seated at an open table. */
   async function seatedTable(): Promise<{ tableId: string; ana: string }> {
     const store = new PrismaTableStore(db.prisma);
-    const ana = await seedProfile(db.prisma, 'dev:ana', 1000);
+    const ana = await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
     const tableId = randomUUID();
     await store.openTable(tableId, CONFIG as never);
-    expect(await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 400 })).toBe('ok');
+    expect(await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 400 })).toBe('ok');
     expect(await store.sitDown({ tableId, seat: 1, playerId: 'bot:Rita', buyIn: 500 })).toBe('ok');
     return { tableId, ana };
   }
@@ -89,8 +92,8 @@ describe('RecoveryService', () => {
 
   it('auditChips holds after recovery', async () => {
     const { tableId } = await seatedTable();
-    await seedProfile(db.prisma, 'dev:bea', 800);
-    await new PrismaTableStore(db.prisma).sitDown({ tableId, seat: 2, playerId: 'dev:bea', buyIn: 700 });
+    await seedProfile(db.prisma, 'dev:bea', 800, BEA_ID);
+    await new PrismaTableStore(db.prisma).sitDown({ tableId, seat: 2, playerId: BEA_ID, buyIn: 700 });
     await new RecoveryService(db.prisma).recover();
     await expect(auditChips(db.prisma)).resolves.toBeUndefined();
   });

@@ -8,11 +8,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Rng } from '@naipes/engine';
 import { envSchema, type Env } from '../config/env';
-import { ACCOUNTS } from '../accounts/account-port';
+import { ACCOUNTS, type AccountPort } from '../accounts/account-port';
 import { AccountService } from '../accounts/account.service';
 import { PrismaService } from '../db/prisma.service';
 import { RecoveryService } from '../recovery/recovery.service';
-import { DevIdentity, IDENTITY } from '../realtime/identity';
+import { SupabaseTokenVerifier, type VerifiedToken } from '../auth/token-verifier';
+import { NICKNAMES, NicknameDirectory } from '../accounts/nickname-directory';
+import { IDENTITY, createIdentity, type IdentityPort } from '../realtime/identity';
 import { TableGateway } from '../realtime/table.gateway';
 import { CryptoDeckSource } from './crypto-deck-source';
 import { PrismaTableStore } from './prisma-table-store';
@@ -28,6 +30,11 @@ function envFrom(config: ConfigService<Env, true>): Env {
 
 /** Bot decisions and names: no need for a CSPRNG, but no seeded stream either. */
 const botRng: Rng = { nextUint32: () => randomInt(0, 2 ** 32) };
+
+/** Injection token of the access-token verifier (null without `SUPABASE_URL`); tests override it. */
+export const TOKEN_VERIFIER = Symbol('TOKEN_VERIFIER');
+
+type TokenVerifier = { verify(token: string): Promise<VerifiedToken | null> };
 
 /** Resolved once startup recovery is done; the director (hence the gateway) depends on it. */
 const RECOVERED = Symbol('RECOVERED');
@@ -57,8 +64,8 @@ const RECOVERED = Symbol('RECOVERED');
     },
     {
       provide: TableDirector,
-      inject: [TABLE_SETTINGS, PrismaService, RECOVERED],
-      useFactory: (settings: TableSettings, prisma: PrismaService): TableDirector =>
+      inject: [TABLE_SETTINGS, PrismaService, NICKNAMES, RECOVERED],
+      useFactory: (settings: TableSettings, prisma: PrismaService, nicknames: NicknameDirectory): TableDirector =>
         new TableDirector({
           settings,
           scheduler: realScheduler,
@@ -67,13 +74,35 @@ const RECOVERED = Symbol('RECOVERED');
           logger: new Logger('Tables'),
           botRng,
           newTableId: () => randomUUID(),
+          nameOf: (playerId) => nicknames.get(playerId),
         }),
     },
     {
-      provide: IDENTITY,
+      provide: TOKEN_VERIFIER,
       inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>): DevIdentity =>
-        new DevIdentity(config.get('NODE_ENV', { infer: true })),
+      useFactory: (config: ConfigService<Env, true>): TokenVerifier | null => {
+        const supabaseUrl = config.get('SUPABASE_URL', { infer: true });
+        return supabaseUrl ? new SupabaseTokenVerifier({ supabaseUrl }) : null;
+      },
+    },
+    {
+      provide: IDENTITY,
+      inject: [ConfigService, ACCOUNTS, TOKEN_VERIFIER],
+      useFactory: (
+        config: ConfigService<Env, true>,
+        accounts: AccountPort,
+        verifier: TokenVerifier | null,
+      ): IdentityPort =>
+        createIdentity(
+          { NODE_ENV: config.get('NODE_ENV', { infer: true }), DEV_IDENTITY: config.get('DEV_IDENTITY', { infer: true }) },
+          accounts,
+          verifier,
+        ),
+    },
+    {
+      provide: NICKNAMES,
+      inject: [ACCOUNTS],
+      useFactory: (accounts: AccountService): NicknameDirectory => new NicknameDirectory(accounts),
     },
     {
       provide: ACCOUNTS,
@@ -86,6 +115,7 @@ const RECOVERED = Symbol('RECOVERED');
     },
     TableGateway,
   ],
+  exports: [IDENTITY, ACCOUNTS, NICKNAMES, TableDirector, TableGateway],
 })
 export class TablesModule implements BeforeApplicationShutdown, OnApplicationShutdown {
   constructor(

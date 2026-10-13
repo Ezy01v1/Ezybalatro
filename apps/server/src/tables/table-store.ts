@@ -1,6 +1,7 @@
 import type { Card, PotAward, ShowdownHand, TableConfig } from '@naipes/engine';
 
-export type SitDownResult = 'ok' | 'insufficient';
+/** `deleted`: the human's profile is deleted (nothing debited). */
+export type SitDownResult = 'ok' | 'insufficient' | 'deleted';
 
 export type HandActionType =
   'post_blind' | 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all_in' | 'timeout';

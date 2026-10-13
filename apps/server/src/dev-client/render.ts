@@ -17,10 +17,16 @@ export function formatCard(card: Card): string {
 
 const formatCards = (cards: readonly Card[]): string => cards.map(formatCard).join(' ');
 
-/** `dev:ana` → `ana`, `bot:rocio` → `rocio`. */
-export function displayName(playerId: string): string {
+/** Names keyed by player id, as sent in `TableUpdate.names`. */
+export type Names = Readonly<Record<string, string>>;
+
+/** The public nickname; else `dev:ana` → `ana`, `bot:rocio` → `rocio`, else a short id. */
+export function displayName(playerId: string, names: Names = {}): string {
+  const known = names[playerId];
+  if (known) return known;
   const colon = playerId.indexOf(':');
-  return colon === -1 ? playerId : playerId.slice(colon + 1);
+  if (colon !== -1) return playerId.slice(colon + 1);
+  return playerId.length > 8 ? playerId.slice(0, 8) : playerId;
 }
 
 const STREET_LABEL: Record<string, string> = {
@@ -32,24 +38,29 @@ const STREET_LABEL: Record<string, string> = {
   voided: 'anulada',
 };
 
-function nameOfSeat(view: TableView, seat: number): string {
+function nameOfSeat(view: TableView, seat: number, names: Names): string {
   const playerId =
     view.seats[seat]?.playerId ?? view.hand?.players.find((p) => p.seat === seat)?.playerId;
-  return playerId ? displayName(playerId) : `asiento ${seat}`;
+  return playerId ? displayName(playerId, names) : `asiento ${seat}`;
 }
 
 /** One readable Spanish line per event, or null for events not worth showing. */
-export function describeEvent(event: HoldemEvent, view: TableView): string | null {
-  const who = (seat: number) => nameOfSeat(view, seat);
+export function describeEvent(
+  event: HoldemEvent,
+  view: TableView,
+  names: Names = {},
+): string | null {
+  const who = (seat: number) => nameOfSeat(view, seat, names);
+  const displayName_ = (id: string) => displayName(id, names);
   switch (event.type) {
     case 'playerSat':
-      return `${displayName(event.playerId)} se sienta con ${event.stack}`;
+      return `${displayName_(event.playerId)} se sienta con ${event.stack}`;
     case 'playerLeft':
-      return `${displayName(event.playerId)} se va (${event.cashOut})`;
+      return `${displayName_(event.playerId)} se va (${event.cashOut})`;
     case 'playerSatOut':
-      return `${displayName(event.playerId)} queda fuera`;
+      return `${displayName_(event.playerId)} queda fuera`;
     case 'playerSatIn':
-      return `${displayName(event.playerId)} vuelve a la mesa`;
+      return `${displayName_(event.playerId)} vuelve a la mesa`;
     case 'handStarted':
       return `Mano #${event.handNumber}`;
     case 'blindMissed':
@@ -95,6 +106,7 @@ function seatLine(
   seat: number,
   me: string,
   turnSeat: number | null,
+  names: Names,
 ): string | null {
   const s = view.seats[seat];
   if (!s) return null;
@@ -115,7 +127,7 @@ function seatLine(
 
   const bet = player && player.streetBet > 0 ? `  apuesta ${player.streetBet}` : '';
   const youMark = s.playerId === me ? ' (tú)' : '';
-  const name = `${displayName(s.playerId)}${youMark}`.padEnd(14);
+  const name = `${displayName(s.playerId, names)}${youMark}`.padEnd(14);
   const line =
     `  ${seat}  ${name} ${String(s.stack).padStart(6)}${bet}  ${marks.join(' ')}`.trimEnd();
   return inHand && player?.folded ? `${DIM}${line}${RESET}` : line;
@@ -150,7 +162,7 @@ export function renderTable(update: TableUpdate, me: string, elapsedMs = 0): str
 
   const turnSeat = turn?.seat ?? null;
   for (let seat = 0; seat < view.seats.length; seat++) {
-    const line = seatLine(view, seat, me, turnSeat);
+    const line = seatLine(view, seat, me, turnSeat, update.names);
     if (line) lines.push(line);
   }
   lines.push('');
@@ -170,10 +182,10 @@ export function renderTable(update: TableUpdate, me: string, elapsedMs = 0): str
   } else if (turn) {
     const seconds = Math.max(0, Math.ceil((turn.endsInMs - elapsedMs) / 1000));
     lines.push('');
-    lines.push(`Turno de ${nameOfSeat(view, turn.seat)} (${seconds} s)`);
+    lines.push(`Turno de ${nameOfSeat(view, turn.seat, update.names)} (${seconds} s)`);
   }
 
-  const events = update.events.map((e) => describeEvent(e, view)).filter((l): l is string => !!l);
+  const events = update.events.map((e) => describeEvent(e, view, update.names)).filter((l): l is string => !!l);
   if (events.length > 0) {
     lines.push('');
     for (const e of events) lines.push(`• ${e}`);

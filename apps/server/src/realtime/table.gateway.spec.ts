@@ -1,12 +1,12 @@
 import type { Server, Socket } from 'socket.io';
-import type { AccountPort } from '../accounts/account-port';
+import { AccountDeletedError, type AccountPort } from '../accounts/account-port';
 import type { QuickSeatResult, TableDirector } from '../tables/table-director';
 import type { TableRuntime } from '../tables/table-runtime';
 import type { TableSettings } from '../tables/table-settings';
 import type { Identity, IdentityPort } from './identity';
 import { TableGateway } from './table.gateway';
 
-const ANA: Identity = { userId: 'dev:ana', displayName: 'ana' };
+const ANA: Identity = { userId: '00000000-0000-4000-8000-00000000000a', isGuest: false };
 
 function fakeSocket(id: string, identity: Identity): Socket {
   return {
@@ -45,7 +45,8 @@ function setup() {
   };
   const identity: IdentityPort = { authenticate: async () => ANA };
   const accounts: AccountPort = {
-    ensureAccount: jest.fn(async () => {}),
+    ensureAccount: jest.fn(async () => ANA.userId),
+    isDeleted: jest.fn(async () => false),
     applyDailyRefill: jest.fn(async () => 0),
   };
   const gateway = new TableGateway(director as unknown as TableDirector, identity, accounts, {
@@ -66,8 +67,8 @@ describe('TableGateway', () => {
     const { gateway, accounts } = setup();
     const socket = { data: {}, handshake: { auth: {} } } as unknown as Socket;
     await expect(handshake(gateway, socket)).resolves.toBeUndefined();
-    expect(accounts.ensureAccount).toHaveBeenCalledWith('dev:ana');
-    expect(accounts.applyDailyRefill).toHaveBeenCalledWith('dev:ana', expect.any(Date));
+    expect(accounts.ensureAccount).toHaveBeenCalledWith({ userId: ANA.userId, isGuest: false });
+    expect(accounts.applyDailyRefill).toHaveBeenCalledWith(ANA.userId, expect.any(Date));
     expect((socket.data as { identity?: Identity }).identity).toEqual(ANA);
   });
 
@@ -82,6 +83,16 @@ describe('TableGateway', () => {
     expect(error.message).toBe('INTERNAL');
     expect(error.data?.code).toBe('INTERNAL');
     expect(JSON.stringify(error.data)).not.toContain('secret-host');
+    expect((socket.data as { identity?: Identity }).identity).toBeUndefined();
+  });
+
+  it('rejects with UNAUTHORIZED when the profile is deleted during account setup', async () => {
+    const { gateway, accounts } = setup();
+    (accounts.ensureAccount as jest.Mock).mockRejectedValue(new AccountDeletedError());
+    const socket = { data: {}, handshake: { auth: {} } } as unknown as Socket;
+    const error = (await handshake(gateway, socket)) as Error;
+    expect(error.message).toBe('UNAUTHORIZED');
+    expect(accounts.applyDailyRefill).not.toHaveBeenCalled();
     expect((socket.data as { identity?: Identity }).identity).toBeUndefined();
   });
 
@@ -157,6 +168,25 @@ describe('TableGateway', () => {
       expect.stringContaining('disconnected exploded'),
       expect.any(String),
     );
+  });
+
+  it('a connection registered after its account was deleted is disconnected with UNAUTHORIZED', async () => {
+    const { gateway, accounts } = setup();
+    (accounts.isDeleted as jest.Mock).mockResolvedValue(true);
+    const socket = fakeSocket('s1', ANA);
+    gateway.handleConnection(socket);
+    await new Promise((r) => setImmediate(r));
+    expect(accounts.isDeleted).toHaveBeenCalledWith(ANA.userId);
+    expect(socket.emit).toHaveBeenCalledWith('error', expect.objectContaining({ type: 'error', code: 'UNAUTHORIZED' }));
+    expect(socket.disconnect).toHaveBeenCalledWith(true);
+  });
+
+  it('a live account keeps its connection', async () => {
+    const { gateway } = setup();
+    const socket = fakeSocket('s1', ANA);
+    gateway.handleConnection(socket);
+    await new Promise((r) => setImmediate(r));
+    expect(socket.disconnect).not.toHaveBeenCalled();
   });
 
   it('a replaced connection gets session:replaced and dropping it starts no grace', () => {

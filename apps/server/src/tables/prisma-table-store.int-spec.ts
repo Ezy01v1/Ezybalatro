@@ -11,6 +11,9 @@ import { HandAlreadyPersistedError, type HandRecord } from './table-store';
 
 const CONFIG: TableConfig = { maxSeats: 6, smallBlind: 5, bigBlind: 10, minBuyIn: 200, maxBuyIn: 1000 };
 
+const ANA_ID = '00000000-0000-4000-8000-00000000000a';
+const BETO_ID = '00000000-0000-4000-8000-00000000000b';
+
 describe('PrismaTableStore', () => {
   let db: TestDatabase;
   let store: PrismaTableStore;
@@ -67,15 +70,15 @@ describe('PrismaTableStore', () => {
     expect(closed.closedAt).toBeInstanceOf(Date);
   });
 
-  it('balance reads the wallet and throws for an unknown dev handle', async () => {
-    await seedProfile(db.prisma, 'dev:ana', 1000);
-    await expect(store.balance('dev:ana')).resolves.toBe(1000);
-    await expect(store.balance('dev:nobody')).rejects.toThrow(/profile/i);
+  it('balance reads the wallet and throws for an unknown profile id', async () => {
+    await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await expect(store.balance(ANA_ID)).resolves.toBe(1000);
+    await expect(store.balance('00000000-0000-4000-8000-0000000000ff')).rejects.toThrow(/profile/i);
   });
 
   it('sitDown with enough balance debits, writes buy_in and inserts the seat', async () => {
-    const ana = await seedProfile(db.prisma, 'dev:ana', 1000);
-    await expect(store.sitDown({ tableId, seat: 2, playerId: 'dev:ana', buyIn: 300 })).resolves.toBe('ok');
+    const ana = await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await expect(store.sitDown({ tableId, seat: 2, playerId: ANA_ID, buyIn: 300 })).resolves.toBe('ok');
     expect(await wallet(ana)).toBe(700n);
     const entries = await db.prisma.chipLedger.findMany({ where: { reason: 'buy_in' } });
     expect(entries).toEqual([
@@ -87,9 +90,18 @@ describe('PrismaTableStore', () => {
     await auditChips(db.prisma);
   });
 
+  it('sitDown for a deleted profile debits nothing and returns deleted', async () => {
+    const ana = await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await db.prisma.profile.update({ where: { id: ana }, data: { deletedAt: new Date() } });
+    await expect(store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 })).resolves.toBe('deleted');
+    expect(await wallet(ana)).toBe(1000n);
+    expect(await db.prisma.chipLedger.count({ where: { reason: 'buy_in' } })).toBe(0);
+    expect(await seats()).toEqual([]);
+  });
+
   it('sitDown without balance returns insufficient and changes nothing', async () => {
-    const ana = await seedProfile(db.prisma, 'dev:ana', 100);
-    await expect(store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 })).resolves.toBe(
+    const ana = await seedProfile(db.prisma, 'dev:ana', 100, ANA_ID);
+    await expect(store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 })).resolves.toBe(
       'insufficient',
     );
     expect(await wallet(ana)).toBe(100n);
@@ -98,10 +110,10 @@ describe('PrismaTableStore', () => {
   });
 
   it('two concurrent sitDowns that exceed the balance: exactly one succeeds, balance never negative', async () => {
-    const ana = await seedProfile(db.prisma, 'dev:ana', 500);
+    const ana = await seedProfile(db.prisma, 'dev:ana', 500, ANA_ID);
     const results = await Promise.all([
-      store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 }),
-      store.sitDown({ tableId, seat: 1, playerId: 'dev:ana', buyIn: 300 }),
+      store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 }),
+      store.sitDown({ tableId, seat: 1, playerId: ANA_ID, buyIn: 300 }),
     ]);
     expect([...results].sort()).toEqual(['insufficient', 'ok']);
     expect(await wallet(ana)).toBe(200n);
@@ -110,15 +122,15 @@ describe('PrismaTableStore', () => {
   });
 
   it('rejects invalid chip amounts', async () => {
-    await seedProfile(db.prisma, 'dev:ana', 1000);
-    await expect(store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 0 })).rejects.toThrow(RangeError);
-    await expect(store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 1.5 })).rejects.toThrow(RangeError);
+    await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await expect(store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 0 })).rejects.toThrow(RangeError);
+    await expect(store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 1.5 })).rejects.toThrow(RangeError);
   });
 
   it('standUp deletes the seat, credits the wallet and writes cash_out', async () => {
-    const ana = await seedProfile(db.prisma, 'dev:ana', 1000);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 });
-    await store.standUp({ tableId, seat: 0, playerId: 'dev:ana', cashOut: 450 });
+    const ana = await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 });
+    await store.standUp({ tableId, seat: 0, playerId: ANA_ID, cashOut: 450 });
     expect(await wallet(ana)).toBe(1150n);
     expect(await seats()).toEqual([]);
     const entries = await db.prisma.chipLedger.findMany({ where: { reason: 'cash_out' } });
@@ -128,8 +140,8 @@ describe('PrismaTableStore', () => {
   });
 
   it('standUp throws when the seat is not held by the player', async () => {
-    await seedProfile(db.prisma, 'dev:ana', 1000);
-    await expect(store.standUp({ tableId, seat: 0, playerId: 'dev:ana', cashOut: 10 })).rejects.toThrow();
+    await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await expect(store.standUp({ tableId, seat: 0, playerId: ANA_ID, cashOut: 10 })).rejects.toThrow();
   });
 
   it('bot sitDown/standUp write bot_buy_in/bot_cash_out with user_id null', async () => {
@@ -149,8 +161,8 @@ describe('PrismaTableStore', () => {
   });
 
   it('persistHand writes hand, actions and stacks in one transaction', async () => {
-    await seedProfile(db.prisma, 'dev:ana', 1000);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 });
+    await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 });
     await store.sitDown({ tableId, seat: 1, playerId: 'bot:Rita', buyIn: 300 });
     const record = handRecord();
     await store.persistHand(record);
@@ -177,16 +189,16 @@ describe('PrismaTableStore', () => {
   });
 
   it('persistHand pays a human leaver and a bot leaver of the same hand to wallet and house', async () => {
-    const ana = await seedProfile(db.prisma, 'dev:ana', 1000);
-    await seedProfile(db.prisma, 'dev:beto', 1000);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 });
+    const ana = await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await seedProfile(db.prisma, 'dev:beto', 1000, BETO_ID);
+    await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 });
     await store.sitDown({ tableId, seat: 1, playerId: 'bot:Rita', buyIn: 300 });
-    await store.sitDown({ tableId, seat: 2, playerId: 'dev:beto', buyIn: 300 });
+    await store.sitDown({ tableId, seat: 2, playerId: BETO_ID, buyIn: 300 });
     await store.persistHand(
       handRecord({
         stacks: [{ seat: 2, stack: 260 }],
         leavers: [
-          { playerId: 'dev:ana', seat: 0, cashOut: 340 },
+          { playerId: ANA_ID, seat: 0, cashOut: 340 },
           { playerId: 'bot:Rita', seat: 1, cashOut: 300 },
         ],
       }),
@@ -206,16 +218,16 @@ describe('PrismaTableStore', () => {
   });
 
   it('persistHand of an already saved hand throws HandAlreadyPersistedError and changes nothing', async () => {
-    const ana = await seedProfile(db.prisma, 'dev:ana', 1000);
-    const beto = await seedProfile(db.prisma, 'dev:beto', 1000);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 });
-    await store.sitDown({ tableId, seat: 1, playerId: 'dev:beto', buyIn: 300 });
+    const ana = await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    const beto = await seedProfile(db.prisma, 'dev:beto', 1000, BETO_ID);
+    await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 });
+    await store.sitDown({ tableId, seat: 1, playerId: BETO_ID, buyIn: 300 });
     await store.sitDown({ tableId, seat: 2, playerId: 'bot:Rita', buyIn: 300 });
     // The committed attempt: ana leaves with the hand.
     await store.persistHand(
       handRecord({
         stacks: [{ seat: 1, stack: 280 }, { seat: 2, stack: 300 }],
-        leavers: [{ playerId: 'dev:ana', seat: 0, cashOut: 320 }],
+        leavers: [{ playerId: ANA_ID, seat: 0, cashOut: 320 }],
       }),
     );
     const ledgerBefore = await db.prisma.chipLedger.count();
@@ -224,15 +236,15 @@ describe('PrismaTableStore', () => {
       handRecord({
         stacks: [{ seat: 2, stack: 300 }],
         leavers: [
-          { playerId: 'dev:ana', seat: 0, cashOut: 320 },
-          { playerId: 'dev:beto', seat: 1, cashOut: 280 },
+          { playerId: ANA_ID, seat: 0, cashOut: 320 },
+          { playerId: BETO_ID, seat: 1, cashOut: 280 },
         ],
       }),
     );
     await expect(retry).rejects.toBeInstanceOf(HandAlreadyPersistedError);
     await expect(retry).rejects.toMatchObject({
       handNumber: 1,
-      unsavedLeavers: [{ playerId: 'dev:beto', seat: 1, cashOut: 280 }],
+      unsavedLeavers: [{ playerId: BETO_ID, seat: 1, cashOut: 280 }],
     });
     expect(await db.prisma.hand.count()).toBe(1);
     expect(await db.prisma.chipLedger.count()).toBe(ledgerBefore);
@@ -243,8 +255,8 @@ describe('PrismaTableStore', () => {
   });
 
   it('persistHand is atomic: a failure mid-way leaves no partial rows', async () => {
-    const ana = await seedProfile(db.prisma, 'dev:ana', 1000);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 });
+    const ana = await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 });
     await store.sitDown({ tableId, seat: 1, playerId: 'bot:Rita', buyIn: 300 });
     const ledgerBefore = await db.prisma.chipLedger.count();
     await expect(
@@ -254,7 +266,7 @@ describe('PrismaTableStore', () => {
             { seat: 1, stack: 280 },
             { seat: 5, stack: 20 }, // no such seat
           ],
-          leavers: [{ playerId: 'dev:ana', seat: 0, cashOut: 320 }],
+          leavers: [{ playerId: ANA_ID, seat: 0, cashOut: 320 }],
         }),
       ),
     ).rejects.toThrow(/seat 5/i);
@@ -264,7 +276,7 @@ describe('PrismaTableStore', () => {
         handRecord({
           stacks: [],
           leavers: [
-            { playerId: 'dev:ana', seat: 0, cashOut: 320 },
+            { playerId: ANA_ID, seat: 0, cashOut: 320 },
             { playerId: 'bot:Ghost', seat: 1, cashOut: 280 }, // seat 1 is Rita's
           ],
         }),
@@ -282,8 +294,8 @@ describe('PrismaTableStore', () => {
   });
 
   it('no unshown hole card appears in any table', async () => {
-    await seedProfile(db.prisma, 'dev:ana', 1000);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 300 });
+    await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 300 });
     await store.sitDown({ tableId, seat: 1, playerId: 'bot:Rita', buyIn: 300 });
     await store.sitDown({ tableId, seat: 2, playerId: 'bot:Leo', buyIn: 300 });
     // Seat 2 mucked Qh Jc (never handed to the store); seats 0 and 1 showed.
@@ -313,10 +325,10 @@ describe('PrismaTableStore', () => {
   });
 
   it('auditChips holds after a sequence of operations', async () => {
-    await seedProfile(db.prisma, 'dev:ana', 1000);
-    await seedProfile(db.prisma, 'dev:beto', 800);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:ana', buyIn: 400 });
-    await store.sitDown({ tableId, seat: 1, playerId: 'dev:beto', buyIn: 500 });
+    await seedProfile(db.prisma, 'dev:ana', 1000, ANA_ID);
+    await seedProfile(db.prisma, 'dev:beto', 800, BETO_ID);
+    await store.sitDown({ tableId, seat: 0, playerId: ANA_ID, buyIn: 400 });
+    await store.sitDown({ tableId, seat: 1, playerId: BETO_ID, buyIn: 500 });
     await store.sitDown({ tableId, seat: 2, playerId: 'bot:Rita', buyIn: 600 });
     await auditChips(db.prisma);
     await store.persistHand(
@@ -335,8 +347,8 @@ describe('PrismaTableStore', () => {
         status: 'voided',
         stacks: [{ seat: 2, stack: 500 }],
         leavers: [
-          { playerId: 'dev:ana', seat: 0, cashOut: 500 },
-          { playerId: 'dev:beto', seat: 1, cashOut: 500 },
+          { playerId: ANA_ID, seat: 0, cashOut: 500 },
+          { playerId: BETO_ID, seat: 1, cashOut: 500 },
         ],
       }),
     );
@@ -344,7 +356,7 @@ describe('PrismaTableStore', () => {
     await store.standUp({ tableId, seat: 2, playerId: 'bot:Rita', cashOut: 500 });
     await store.closeTable(tableId);
     await auditChips(db.prisma);
-    await expect(store.balance('dev:ana')).resolves.toBe(1100);
-    await expect(store.balance('dev:beto')).resolves.toBe(800);
+    await expect(store.balance(ANA_ID)).resolves.toBe(1100);
+    await expect(store.balance(BETO_ID)).resolves.toBe(800);
   });
 });

@@ -17,7 +17,7 @@ describe('database schema', () => {
 
   async function createProfile(handle: string): Promise<string> {
     const profile = await db.prisma.profile.create({
-      data: { devHandle: handle, nickname: handle, wallet: { create: { balance: 100n } } },
+      data: { devHandle: handle, nickname: handle.replace(/^dev:/, ''), wallet: { create: { balance: 100n } } },
     });
     return profile.id;
   }
@@ -116,5 +116,35 @@ describe('database schema', () => {
       data: { stack: 501n },
     });
     await expect(auditChips(db.prisma)).rejects.toThrow(/conservation/i);
+  });
+  it('enforces the nickname format with a CHECK but allows NULL', async () => {
+    await expect(db.prisma.profile.create({ data: { nickname: 'ab' } })).rejects.toThrow();
+    await expect(db.prisma.profile.create({ data: { nickname: 'has space' } })).rejects.toThrow();
+    await expect(db.prisma.profile.create({ data: { nickname: 'a'.repeat(21) } })).rejects.toThrow();
+    await expect(db.prisma.profile.create({ data: { nickname: 'Ana_01' } })).resolves.toBeDefined();
+    await expect(db.prisma.profile.create({ data: { nickname: null } })).resolves.toBeDefined();
+    await expect(db.prisma.profile.create({ data: { nickname: null } })).resolves.toBeDefined();
+  });
+
+  it('keeps nicknames unique only among non-deleted profiles', async () => {
+    await db.prisma.profile.create({ data: { nickname: 'ana' } });
+    await expect(db.prisma.profile.create({ data: { nickname: 'ana' } })).rejects.toThrow();
+    const gone = await db.prisma.profile.create({ data: { nickname: 'luis', deletedAt: new Date() } });
+    await expect(db.prisma.profile.create({ data: { nickname: 'luis' } })).resolves.toBeDefined();
+    expect(gone.deletedAt).not.toBeNull();
+  });
+
+  it('stores avatar_id and counts account_deleted as a registered outflow in auditChips', async () => {
+    const profile = await db.prisma.profile.create({
+      data: { nickname: 'ana', avatarId: 'a01', wallet: { create: { balance: 0n } } },
+    });
+    expect(profile.avatarId).toBe('a01');
+    await db.prisma.chipLedger.createMany({
+      data: [
+        { userId: profile.id, delta: 1000n, balanceAfter: 1000n, reason: 'initial' },
+        { userId: profile.id, delta: -1000n, balanceAfter: 0n, reason: 'account_deleted' },
+      ],
+    });
+    await expect(auditChips(db.prisma)).resolves.toBeUndefined();
   });
 });

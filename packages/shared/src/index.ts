@@ -25,6 +25,9 @@ export const socketErrorCodeSchema = z.enum([
   'SESSION_REPLACED',
   'UNAUTHORIZED',
   'RATE_LIMITED',
+  'NICKNAME_TAKEN',
+  'ACCOUNT_BUSY',
+  'NOT_CONFIGURED',
 ]);
 export type SocketErrorCode = z.infer<typeof socketErrorCodeSchema>;
 
@@ -57,4 +60,5 @@ export type Pong = z.infer<typeof pongSchema>;
 export const healthResponseSchema = z.object({ status: z.literal('ok') });
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
 
+export * from './me';
 export * from './table-protocol';

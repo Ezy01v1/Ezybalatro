@@ -182,7 +182,8 @@ describe('Persistence (e2e)', () => {
     const store = new PrismaTableStore(db.prisma);
     const tableId = randomUUID();
     await store.openTable(tableId, { maxSeats: 6, smallBlind: 10, bigBlind: 20, minBuyIn: 400, maxBuyIn: 2000 } as never);
-    await store.sitDown({ tableId, seat: 0, playerId: 'dev:bea', buyIn: 1500 });
+    const bea = await db.prisma.profile.findUniqueOrThrow({ where: { devHandle: 'dev:bea' } });
+    await store.sitDown({ tableId, seat: 0, playerId: bea.id, buyIn: 1500 });
     await store.sitDown({ tableId, seat: 1, playerId: 'bot:Rita', buyIn: 800 });
     expect(await walletOf('dev:bea')).toBe(CHIPS_INITIAL - 1500n);
 

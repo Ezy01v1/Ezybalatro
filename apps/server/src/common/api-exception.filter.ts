@@ -8,10 +8,10 @@ import {
 } from '@nestjs/common';
 import type { RestError } from '@naipes/shared';
 import type { Request, Response } from 'express';
-import { randomUUID } from 'node:crypto';
+import { requestIdOf } from '../observability/request-id';
 
 const CODE_BY_STATUS: Record<number, string> = {
-  400: 'BAD_REQUEST',
+  400: 'INVALID_REQUEST',
   401: 'UNAUTHORIZED',
   403: 'FORBIDDEN',
   404: 'NOT_FOUND',
@@ -29,7 +29,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const http = host.switchToHttp();
     const request = http.getRequest<Request>();
     const response = http.getResponse<Response>();
-    const requestId = request.header('x-request-id') ?? randomUUID();
+    const requestId = requestIdOf(request);
 
     let status: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let code = 'INTERNAL';

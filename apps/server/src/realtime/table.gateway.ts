@@ -1,4 +1,4 @@
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -19,7 +19,8 @@ import {
   type TableUpdate,
 } from '@naipes/shared';
 import type { Server, Socket } from 'socket.io';
-import { ACCOUNTS, type AccountPort } from '../accounts/account-port';
+import { ACCOUNTS, AccountDeletedError, type AccountPort } from '../accounts/account-port';
+import { NICKNAMES, type NicknameDirectory } from '../accounts/nickname-directory';
 import { socketError } from '../tables/errors';
 import { TableDirector } from '../tables/table-director';
 import type { TableMessage, TableRuntime } from '../tables/table-runtime';
@@ -64,6 +65,7 @@ export class TableGateway
     @Inject(IDENTITY) private readonly identity: IdentityPort,
     @Inject(ACCOUNTS) private readonly accounts: AccountPort,
     @Inject(TABLE_SETTINGS) settings: TableSettings,
+    @Optional() @Inject(NICKNAMES) private readonly nicknames?: Pick<NicknameDirectory, 'load'>,
   ) {
     this.limiter = new SocketRateLimiter(settings.socketRateLimitPerSec, () => Date.now());
   }
@@ -85,6 +87,10 @@ export class TableGateway
               next();
             },
             (error: unknown) => {
+              if (error instanceof AccountDeletedError) {
+                next(new Error('UNAUTHORIZED'));
+                return;
+              }
               this.logError('account setup failed', error);
               const rejection = new Error('INTERNAL') as Error & { data?: SocketError };
               rejection.data = socketError('INTERNAL', 'Internal error');
@@ -101,8 +107,9 @@ export class TableGateway
   }
 
   private async prepareAccount(identity: Identity): Promise<void> {
-    await this.accounts.ensureAccount(identity.userId);
+    await this.accounts.ensureAccount({ userId: identity.userId, isGuest: identity.isGuest });
     await this.accounts.applyDailyRefill(identity.userId, new Date());
+    await this.nicknames?.load(identity.userId);
   }
 
   /** Nest calls this from an RxJS subscribe: a throw would become an uncaught exception. */
@@ -143,6 +150,14 @@ export class TableGateway
       previous.disconnect();
       previous.conn.close();
     }
+    // The account may have been deleted after the handshake checked it (and after `disconnectUser`
+    // ran): `deleted_at` is committed before `disconnectUser`, so this re-check closes the gap.
+    this.accounts.isDeleted(userId).then(
+      (deleted) => {
+        if (deleted && this.sockets.get(userId) === socket) this.disconnectUser(userId);
+      },
+      (error: unknown) => this.logError('deleted-account check failed', error),
+    );
     const table = this.director.tableOf(userId);
     if (table) {
       table.reconnected(userId);
@@ -244,6 +259,18 @@ export class TableGateway
       if (!table) return notAtTable();
       return { ok: true, update: table.snapshot(userId) };
     });
+  }
+
+  /**
+   * Account deleted: the user's open connection gets an `error` `UNAUTHORIZED` and is disconnected by
+   * the server (the client does not reconnect on its own; a new handshake is rejected).
+   */
+  disconnectUser(userId: string): void {
+    const socket = this.sockets.get(userId);
+    if (!socket) return;
+    this.sockets.delete(userId);
+    socket.emit(SOCKET_EVENTS.error, socketError('UNAUTHORIZED', 'Account deleted'));
+    socket.disconnect(true);
   }
 
   /**

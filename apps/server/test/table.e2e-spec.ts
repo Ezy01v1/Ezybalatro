@@ -57,8 +57,13 @@ function until(check: () => boolean, timeoutMs: number, label: string): Promise<
 const clients: Player[] = [];
 
 /** A Socket.IO client that, with `autoplay`, checks or calls whenever `view.legal` is not null. */
+/** `profiles.id` of a dev handle (set once the database is up): the player id at the tables. */
+let profileIdOf: (devHandle: string) => Promise<string> = () => Promise.reject(new Error('no database'));
+
 class Player {
-  readonly userId: string;
+  /** The `profiles.id`, known once `connected()` resolves (the server creates the account on connect). */
+  userId = '';
+  private readonly handle: string;
   readonly socket: Socket;
   readonly received: Received[] = [];
   readonly updates: TableUpdate[] = [];
@@ -72,12 +77,12 @@ class Player {
     name: string,
     private readonly options: { autoplay?: boolean; auth?: unknown } = {},
   ) {
-    this.userId = `dev:${name}`;
+    this.handle = `dev:${name}`;
     this.socket = io(url, {
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
-      auth: (options.auth ?? { token: this.userId }) as Record<string, unknown>,
+      auth: (options.auth ?? { token: this.handle }) as Record<string, unknown>,
     });
     this.socket.onAny((event: string, payload: unknown) => {
       this.received.push({ event, payload });
@@ -94,8 +99,8 @@ class Player {
     clients.push(this);
   }
 
-  connected(): Promise<void> {
-    return new Promise((resolve, reject) => {
+  async connected(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
       if (this.socket.connected) {
         resolve();
         return;
@@ -103,6 +108,7 @@ class Player {
       this.socket.once('connect', () => resolve());
       this.socket.once('connect_error', reject);
     });
+    this.userId = await profileIdOf(this.handle);
   }
 
   async emit<T extends object = object>(event: string, payload?: unknown): Promise<Ack<T>> {
@@ -244,6 +250,8 @@ describe('Table gateway (e2e)', () => {
 
   beforeAll(async () => {
     db = await startE2eDatabase();
+    profileIdOf = async (devHandle) =>
+      (await db.prisma.profile.findUniqueOrThrow({ where: { devHandle } })).id;
   });
 
   // A fresh app and an empty database per test: tables, wallets and quick-seat choices never leak.
@@ -402,7 +410,7 @@ describe('Table gateway (e2e)', () => {
         tableId: a.tableId,
         seq,
         action: { type: 'fold' },
-        playerId: 'dev:beto',
+        playerId: randomUUID(),
       }),
     ).toMatchObject(invalid);
     expect(await a.player.emit(SOCKET_EVENTS.quickSeat, { buyIn: '1000' })).toMatchObject(invalid);

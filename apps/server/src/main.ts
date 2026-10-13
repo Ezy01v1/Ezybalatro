@@ -6,7 +6,7 @@ import type { Env } from './config/env';
 import { setupApp } from './setup-app';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const config = app.get<ConfigService<Env, true>>(ConfigService);
   const origins = config.get('CORS_ORIGINS', { infer: true });
   app.enableCors({ origin: origins.length > 0 ? origins : false });

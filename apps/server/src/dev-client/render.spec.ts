@@ -8,7 +8,7 @@ import {
   type TableState,
 } from '@naipes/engine';
 import type { TableUpdate } from '@naipes/shared';
-import { renderTable } from './render';
+import { displayName, renderTable } from './render';
 
 const CONFIG = { maxSeats: 6, smallBlind: 10, bigBlind: 20, minBuyIn: 400, maxBuyIn: 2000 };
 // eslint-disable-next-line no-control-regex
@@ -38,7 +38,7 @@ function updateFor(
   events: HoldemEvent[] = [],
   turn: TableUpdate['turn'] = null,
 ): TableUpdate {
-  return { tableId: 't1', seq: 3, events, view: viewFor(state, me), turn };
+  return { tableId: 't1', seq: 3, events, view: viewFor(state, me), turn, names: {} };
 }
 
 describe('renderTable', () => {
@@ -67,6 +67,16 @@ describe('renderTable', () => {
     expect(text).toContain('rocio');
     expect(text).not.toContain('dev:ana');
     expect(text).not.toContain('bot:rocio');
+  });
+
+  it('prefers update.names over ids and falls back to a short id', () => {
+    const { state, events } = dealt();
+    const actor = state.seats[state.hand!.toAct!]!.playerId;
+    const update = { ...updateFor(state, actor, events), names: { [actor]: 'Capitana' } };
+    const text = strip(renderTable(update, actor));
+    expect(text).toContain('Capitana');
+    expect(displayName('0f8fad5b-d9cb-469f-a165-70867728950e')).toBe('0f8fad5b');
+    expect(displayName('x', { x: 'Nick' })).toBe('Nick');
   });
 
   it('shows legal actions with amounts', () => {

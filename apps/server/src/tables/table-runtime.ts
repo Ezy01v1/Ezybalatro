@@ -67,6 +67,8 @@ export interface TableRuntimeDeps {
   store: TableStore;
   logger: TableLogger;
   hooks?: Partial<TableHooks>;
+  /** Current nickname of a human player (public); unknown ones are left out of `names`. */
+  nameOf?: (playerId: string) => string | undefined;
 }
 
 type Applied = { ok: true; events: readonly HoldemEvent[] } | { ok: false; error: SocketError };
@@ -237,6 +239,7 @@ export class TableRuntime {
       if (seat === -1) return fail(socketError('TABLE_FULL', 'The table is full'));
       const stored = { tableId: this.id, seat, playerId };
       const outcome = await this.deps.store.sitDown({ ...stored, buyIn });
+      if (outcome === 'deleted') return fail(socketError('UNAUTHORIZED', 'Account deleted'));
       if (outcome === 'insufficient') {
         return fail(socketError('INSUFFICIENT_CHIPS', 'Not enough chips for the buy-in'));
       }
@@ -780,7 +783,18 @@ export class TableRuntime {
       events,
       view: viewFor(this.state, playerId),
       turn: this.turn(),
+      names: this.names(),
     };
+  }
+
+  /** Display names of the seated players: nicknames of humans, bot names without the prefix. */
+  private names(): Record<string, string> {
+    const names: Record<string, string> = {};
+    for (const id of this.playerIds()) {
+      const name = isBotId(id) ? id.slice(id.indexOf(':') + 1) : this.deps.nameOf?.(id);
+      if (name !== undefined) names[id] = name;
+    }
+    return names;
   }
 
   private turn(): TableUpdate['turn'] {
