@@ -33,6 +33,8 @@ export const envSchema = z
     CHIPS_INITIAL: int(10000).pipe(z.number().min(0)),
     CHIPS_DAILY_REFILL_TO: int(2000).pipe(z.number().min(0)),
     SOCKET_RATE_LIMIT_PER_SEC: int(10).pipe(z.number().min(1)),
+    // On shutdown, max wait for the hands in progress to finish before voiding them.
+    SHUTDOWN_DRAIN_MS: int(60000).pipe(z.number().min(0)),
     BOT_DELAY_MIN_MS: int(800).pipe(z.number().min(0)),
     BOT_DELAY_MAX_MS: int(2500).pipe(z.number().min(0)),
     // Connection strings: never echoed in errors or logs. Empty counts as missing.
@@ -45,7 +47,9 @@ export const envSchema = z
     // Supabase secret key (server only): deletes Auth users on account deletion. Never logged.
     SUPABASE_SECRET_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
     // Minimum level of the JSON logs (pino).
-    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
     // Accept `dev:<name>` identities on the table socket (never in production).
     DEV_IDENTITY: z
       .enum(['true', 'false'])
@@ -70,13 +74,20 @@ export const envSchema = z
     if (env.NODE_ENV === 'production' && !env.DATABASE_URL) {
       fail('DATABASE_URL', 'required in production');
     }
+    if (env.NODE_ENV === 'production' && !env.DIRECT_URL) {
+      fail('DIRECT_URL', 'required in production');
+    }
     if (env.NODE_ENV === 'production' && env.DEV_IDENTITY) {
       fail('DEV_IDENTITY', 'must not be true in production');
     }
     if (!env.SUPABASE_URL && !(env.DEV_IDENTITY && env.NODE_ENV !== 'production')) {
       fail('SUPABASE_URL', 'required unless DEV_IDENTITY=true outside production');
     }
-    if (env.NODE_ENV === 'production' && env.SUPABASE_URL && !env.SUPABASE_URL.startsWith('https://')) {
+    if (
+      env.NODE_ENV === 'production' &&
+      env.SUPABASE_URL &&
+      !env.SUPABASE_URL.startsWith('https://')
+    ) {
       fail('SUPABASE_URL', 'must be https in production');
     }
     if (env.NODE_ENV === 'production' && !env.SUPABASE_SECRET_KEY) {

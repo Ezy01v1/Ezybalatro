@@ -29,7 +29,11 @@ function connect(url: string, name: string, autoplay = false): Promise<Socket> {
     if (!autoplay || !legal || update.seq <= acted) return;
     acted = update.seq;
     const action = legal.canCheck ? { type: 'check' } : { type: 'call' };
-    socket.emit(SOCKET_EVENTS.act, { tableId: update.tableId, seq: update.seq, action }, () => undefined);
+    socket.emit(
+      SOCKET_EVENTS.act,
+      { tableId: update.tableId, seq: update.seq, action },
+      () => undefined,
+    );
   });
   // The player's stack at the end of each settled hand, for an optional cross-check with the DB.
   socket.on(SOCKET_EVENTS.tableUpdate, (update: TableUpdate) => {
@@ -50,7 +54,11 @@ function connect(url: string, name: string, autoplay = false): Promise<Socket> {
   });
 }
 
-async function poll<T>(read: () => Promise<T | null>, timeoutMs: number, label: string): Promise<T> {
+async function poll<T>(
+  read: () => Promise<T | null>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = await read();
@@ -67,7 +75,9 @@ describe('Persistence (e2e)', () => {
   const sockets: Socket[] = [];
 
   async function startApp(): Promise<void> {
-    const moduleRef = await Test.createTestingModule({ imports: [await loadAppModule()] }).compile();
+    const moduleRef = await Test.createTestingModule({
+      imports: [await loadAppModule()],
+    }).compile();
     app = moduleRef.createNestApplication();
     setupApp(app);
     await app.listen(0, '127.0.0.1');
@@ -119,7 +129,9 @@ describe('Persistence (e2e)', () => {
 
   it('a hand played over Socket.IO is persisted with its actions', async () => {
     const ana = await join('ana', true);
-    const ack = (await ana.timeout(5000).emitWithAck(SOCKET_EVENTS.quickSeat, {})) as Ack<{ tableId: string }>;
+    const ack = (await ana.timeout(5000).emitWithAck(SOCKET_EVENTS.quickSeat, {})) as Ack<{
+      tableId: string;
+    }>;
     expect(ack.ok).toBe(true);
     const tableId = ack.ok ? ack.tableId : '';
 
@@ -130,19 +142,23 @@ describe('Persistence (e2e)', () => {
     );
     expect(hand.status).toBe('settled');
     expect(hand.actions.length).toBeGreaterThan(0);
-    expect(await db.prisma.pokerTable.count({ where: { id: tableId, status: { not: 'closed' } } })).toBe(1);
+    expect(
+      await db.prisma.pokerTable.count({ where: { id: tableId, status: { not: 'closed' } } }),
+    ).toBe(1);
     await auditChips(db.prisma);
   });
 
   it("after a server restart the player's chips are back in the wallet", async () => {
     const ana = await join('ana', true);
-    const ack = (await ana.timeout(5000).emitWithAck(SOCKET_EVENTS.quickSeat, {})) as Ack<{ tableId: string }>;
+    const ack = (await ana.timeout(5000).emitWithAck(SOCKET_EVENTS.quickSeat, {})) as Ack<{
+      tableId: string;
+    }>;
     expect(ack.ok).toBe(true);
     await poll(() => db.prisma.hand.findFirst(), 20_000, 'a persisted hand');
 
     await stopApp();
-    // Graceful shutdown: the hand in progress is voided and ana is paid her stack at the end of the
-    // last saved hand. The DB is the oracle: wallet = balance after the buy-in + every cash-out
+    // Graceful shutdown: the hand in progress is drained (or voided at the cap) and ana is paid her
+    // stack at the end of the last saved hand. The DB is the oracle: wallet = balance after the buy-in + every cash-out
     // credited to her afterwards (none if her stack was 0).
     expect(await db.prisma.seat.count()).toBe(0);
     const buyIn = await db.prisma.chipLedger.findFirstOrThrow({
@@ -181,16 +197,29 @@ describe('Persistence (e2e)', () => {
     // A process that died mid-session: open table, bea and a bot still seated.
     const store = new PrismaTableStore(db.prisma);
     const tableId = randomUUID();
-    await store.openTable(tableId, { maxSeats: 6, smallBlind: 10, bigBlind: 20, minBuyIn: 400, maxBuyIn: 2000 } as never);
+    await store.openTable(tableId, {
+      maxSeats: 6,
+      smallBlind: 10,
+      bigBlind: 20,
+      minBuyIn: 400,
+      maxBuyIn: 2000,
+    } as never);
     const bea = await db.prisma.profile.findUniqueOrThrow({ where: { devHandle: 'dev:bea' } });
     await store.sitDown({ tableId, seat: 0, playerId: bea.id, buyIn: 1500 });
     await store.sitDown({ tableId, seat: 1, playerId: 'bot:Rita', buyIn: 800 });
     expect(await walletOf('dev:bea')).toBe(CHIPS_INITIAL - 1500n);
 
     await startApp();
+    // Recovery runs in the background once the instance lock is free (nobody holds it here).
+    await poll(
+      async () => ((await db.prisma.seat.count()) === 0 ? true : null),
+      10_000,
+      'recovery',
+    );
     expect(await walletOf('dev:bea')).toBe(CHIPS_INITIAL);
-    expect(await db.prisma.seat.count()).toBe(0);
-    expect((await db.prisma.pokerTable.findUniqueOrThrow({ where: { id: tableId } })).status).toBe('closed');
+    expect((await db.prisma.pokerTable.findUniqueOrThrow({ where: { id: tableId } })).status).toBe(
+      'closed',
+    );
     await join('bea');
     await auditChips(db.prisma);
   });

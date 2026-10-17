@@ -1,5 +1,5 @@
 # 0006. Hosting del servidor: PaaS con proceso persistente (proveedor a elegir en Fase 3)
-Estado: Aceptado
+Estado: Aceptado · Matizado por el ADR 0009 (Render plan gratis, con sleep, mientras no haya presupuesto)
 Fecha: 2026-10-03
 
 ## Contexto

@@ -29,6 +29,7 @@ const SETTINGS: TableSettings = {
   botDelayMs: { min: 500, max: 1500 },
   devWalletInitial: TEST_WALLET_INITIAL,
   socketRateLimitPerSec: 20,
+  shutdownDrainMs: 60_000,
 };
 
 function makeDirector(overrides: Partial<TableSettings> = {}, deps: Partial<DirectorDeps> = {}) {
@@ -544,7 +545,7 @@ describe('TableDirector', () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it('shutdown voids hands and credits every human', async () => {
+  it('shutdown drains, then closes every table and credits every human', async () => {
     const { director, scheduler, wallet, house, logger } = makeDirector();
     await seat(director, 'alice');
     await seat(director, 'bob', 500);
@@ -553,14 +554,17 @@ describe('TableDirector', () => {
     await scheduler.advance(TEST_TIMINGS.betweenHandsMs);
     expect(table.isHandInProgress()).toBe(true);
 
-    await director.shutdown();
+    const done = director.shutdown();
+    await scheduler.advance(SETTINGS.shutdownDrainMs);
+    await done;
 
     expect(table.status).toBe('closed');
-    expect(events.some((e) => e.type === 'handVoided')).toBe(true);
+    expect(events.some((e) => e.type === 'handVoided' || e.type === 'handSettled')).toBe(true);
     expect(closed).toEqual([{ tableId: 't1', reason: 'shutdown' }]);
-    expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
-    expect(await wallet.balance('bob')).toBe(TEST_WALLET_INITIAL);
-    expect(house.houseOutstanding()).toBe(0);
+    // The drained hand may have moved chips between humans and bots: what humans won, the house lost.
+    expect(
+      (await wallet.balance('alice')) + (await wallet.balance('bob')) - 2 * TEST_WALLET_INITIAL,
+    ).toBe(house.houseOutstanding());
     expect(director.tables()).toHaveLength(0);
     expect(director.tableOf('alice')).toBeNull();
     expect(scheduler.pendingCount()).toBe(0);
@@ -668,7 +672,10 @@ describe('TableDirector', () => {
       const { director } = makeDirector();
       expect(await director.evict('alice')).toBe('done');
       const result = await director.quickSeat('alice');
-      expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'UNAUTHORIZED' }) });
+      expect(result).toEqual({
+        ok: false,
+        error: expect.objectContaining({ code: 'UNAUTHORIZED' }),
+      });
       expect(director.tables()).toHaveLength(0);
     });
 
@@ -692,7 +699,10 @@ describe('TableDirector', () => {
       const evicted = director.evict('alice', 120_000).then((r) => (outcome = r));
       await scheduler.flush();
       expect(outcome).toBeNull();
-      expect(await director.quickSeat('alice')).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
+      expect(await director.quickSeat('alice')).toMatchObject({
+        ok: false,
+        error: { code: 'UNAUTHORIZED' },
+      });
 
       while (outcome === null) await scheduler.advance(1000);
       await evicted;
@@ -728,8 +738,140 @@ describe('TableDirector', () => {
     it('two concurrent evictions both finish done', async () => {
       const { director, wallet } = makeDirector({ botFillTarget: 1 });
       await seat(director, 'alice');
-      expect(await Promise.all([director.evict('alice'), director.evict('alice')])).toEqual(['done', 'done']);
+      expect(await Promise.all([director.evict('alice'), director.evict('alice')])).toEqual([
+        'done',
+        'done',
+      ]);
       expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
+    });
+  });
+
+  describe('shutdown drain', () => {
+    /** Two humans that never act (no bots): the hand only ends by timeouts or by the drain cap. */
+    async function twoIdleHumans(overrides: Partial<TableSettings> = {}) {
+      const ctx = makeDirector({ botFillTarget: 0, ...overrides });
+      await seat(ctx.director, 'alice');
+      await seat(ctx.director, 'bob');
+      const table = ctx.director.get('t1')!;
+      const seen = observe(table);
+      await ctx.scheduler.advance(TEST_TIMINGS.betweenHandsMs);
+      expect(table.isHandInProgress()).toBe(true);
+      return { ...ctx, table, ...seen };
+    }
+
+    async function settle(done: Promise<void>): Promise<boolean> {
+      let resolved = false;
+      void done.then(() => (resolved = true));
+      await Promise.resolve();
+      return resolved;
+    }
+
+    it('lets the hand in progress finish before closing', async () => {
+      const { director, scheduler, table, events, closed, wallet, house } = await twoIdleHumans();
+      drive(table, 'alice');
+      drive(table, 'bob');
+      const done = director.shutdown();
+      for (let i = 0; i < 100 && table.status !== 'closed'; i++) await scheduler.advance(100);
+      await done;
+
+      expect(events.some((e) => e.type === 'handSettled')).toBe(true);
+      expect(events.some((e) => e.type === 'handVoided')).toBe(false);
+      expect(closed).toEqual([{ tableId: 't1', reason: 'shutdown' }]);
+      expect((await wallet.balance('alice')) + (await wallet.balance('bob'))).toBe(
+        2 * TEST_WALLET_INITIAL,
+      );
+      expect(house.houseOutstanding()).toBe(0);
+    });
+
+    it('starts no new hand while draining', async () => {
+      const { director, scheduler, table, events } = await twoIdleHumans();
+      const done = director.shutdown();
+      const started = () => events.filter((e) => e.type === 'handStarted').length;
+      const before = started();
+      // Turn timeouts end the hand; then betweenHandsMs passes without a new one.
+      for (let i = 0; i < 20 && table.isHandInProgress(); i++) {
+        await scheduler.advance(TEST_TIMINGS.turnTimeoutMs);
+      }
+      await scheduler.advance(TEST_TIMINGS.betweenHandsMs);
+      await done;
+      expect(started()).toBe(before);
+      expect(table.status).toBe('closed');
+    });
+
+    it('voids the hand when the drain times out', async () => {
+      // Turns longer than the cap: only the cap can end this hand.
+      const slow = { ...TEST_TIMINGS, turnTimeoutMs: 10 * SETTINGS.shutdownDrainMs };
+      const { director, scheduler, events, wallet, logger } = await twoIdleHumans({
+        timings: slow,
+      });
+      const done = director.shutdown();
+      await scheduler.advance(SETTINGS.shutdownDrainMs - 1);
+      expect(await settle(done)).toBe(false);
+      await scheduler.advance(1);
+      await done;
+      expect(events.some((e) => e.type === 'handVoided')).toBe(true);
+      expect(await wallet.balance('alice')).toBe(TEST_WALLET_INITIAL);
+      expect(await wallet.balance('bob')).toBe(TEST_WALLET_INITIAL);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Drain timed out'));
+    });
+
+    it('closes at once when no hand is in progress', async () => {
+      const { director } = makeDirector({ botFillTarget: 0 });
+      await seat(director, 'alice'); // alone: no hand starts
+      const table = director.get('t1')!;
+      expect(table.isHandInProgress()).toBe(false);
+      await director.shutdown(); // no scheduler advance needed
+      expect(table.status).toBe('closed');
+    });
+
+    it('does not hang on a degraded table', async () => {
+      const { director, store, scheduler, logger } = makeDirector();
+      await seat(director, 'alice');
+      const table = director.get('t1')!;
+      drive(table, 'alice');
+      store.failNext('persistHand', 1000);
+      await scheduler.advance(TEST_TIMINGS.betweenHandsMs);
+      for (let i = 0; i < 200 && !table.degraded; i++) await scheduler.advance(1000);
+      expect(table.degraded).toBe(true);
+
+      const done = director.shutdown();
+      await scheduler.advance(SETTINGS.shutdownDrainMs);
+      await done;
+      expect(table.status).toBe('closed');
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Drain timed out'));
+    });
+
+    it('is idempotent', async () => {
+      const { director, scheduler, closed, wallet } = await twoIdleHumans();
+      const both = Promise.all([director.shutdown(), director.shutdown()]);
+      await scheduler.advance(SETTINGS.shutdownDrainMs);
+      await both;
+      await director.shutdown();
+      expect(closed).toEqual([{ tableId: 't1', reason: 'shutdown' }]);
+      expect((await wallet.balance('alice')) + (await wallet.balance('bob'))).toBe(
+        2 * TEST_WALLET_INITIAL,
+      );
+    });
+
+    it('rejects quick seat while draining', async () => {
+      const { director, scheduler } = await twoIdleHumans();
+      const done = director.shutdown();
+      expect(await director.quickSeat('carol')).toEqual({
+        ok: false,
+        error: expect.objectContaining({ code: 'TABLE_CLOSED' }),
+      });
+      await scheduler.advance(SETTINGS.shutdownDrainMs);
+      await done;
+    });
+
+    it('stops waiting for a table that closes while draining', async () => {
+      const { director, scheduler, table } = await twoIdleHumans();
+      const done = director.shutdown();
+      await table.close('empty'); // closed by someone else mid-drain
+      expect(await settle(done)).toBe(false); // still flushing the close
+      await scheduler.flush();
+      await done;
+      expect(scheduler.now()).toBeLessThan(SETTINGS.shutdownDrainMs);
     });
   });
 });

@@ -3,6 +3,7 @@ import {
   Logger,
   Module,
   type BeforeApplicationShutdown,
+  type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -10,7 +11,9 @@ import type { Rng } from '@naipes/engine';
 import { envSchema, type Env } from '../config/env';
 import { ACCOUNTS, type AccountPort } from '../accounts/account-port';
 import { AccountService } from '../accounts/account.service';
-import { PrismaService } from '../db/prisma.service';
+import { DATABASE_URL, PrismaService } from '../db/prisma.service';
+import { InstanceLock } from '../recovery/instance-lock';
+import { RecoveryRunner } from '../recovery/recovery-runner';
 import { RecoveryService } from '../recovery/recovery.service';
 import { SupabaseTokenVerifier, type VerifiedToken } from '../auth/token-verifier';
 import { NICKNAMES, NicknameDirectory } from '../accounts/nickname-directory';
@@ -36,26 +39,13 @@ export const TOKEN_VERIFIER = Symbol('TOKEN_VERIFIER');
 
 type TokenVerifier = { verify(token: string): Promise<VerifiedToken | null> };
 
-/** Resolved once startup recovery is done; the director (hence the gateway) depends on it. */
-const RECOVERED = Symbol('RECOVERED');
-
 /**
  * Tables in memory (ADR 0004) persisted through `PrismaTableStore`, and their Socket.IO gateway.
- * Startup recovery runs in a provider the director depends on: Nest awaits it before the app
- * listens, so no connection is accepted while seats from the previous process are being returned.
+ * Startup recovery runs in the background once the previous instance released the instance lock
+ * (spec 3d §2b): Render starts this instance before it stops the old one, which is still draining.
  */
 @Module({
   providers: [
-    {
-      provide: RECOVERED,
-      inject: [PrismaService],
-      useFactory: async (prisma: PrismaService): Promise<true> => {
-        const logger = new Logger('Recovery');
-        const { seats, chips } = await new RecoveryService(prisma).recover();
-        logger.log(`Startup recovery: ${seats} seat(s), ${chips} chip(s) returned; open tables closed`);
-        return true;
-      },
-    },
     {
       provide: TABLE_SETTINGS,
       inject: [ConfigService],
@@ -64,8 +54,12 @@ const RECOVERED = Symbol('RECOVERED');
     },
     {
       provide: TableDirector,
-      inject: [TABLE_SETTINGS, PrismaService, NICKNAMES, RECOVERED],
-      useFactory: (settings: TableSettings, prisma: PrismaService, nicknames: NicknameDirectory): TableDirector =>
+      inject: [TABLE_SETTINGS, PrismaService, NICKNAMES],
+      useFactory: (
+        settings: TableSettings,
+        prisma: PrismaService,
+        nicknames: NicknameDirectory,
+      ): TableDirector =>
         new TableDirector({
           settings,
           scheduler: realScheduler,
@@ -94,7 +88,10 @@ const RECOVERED = Symbol('RECOVERED');
         verifier: TokenVerifier | null,
       ): IdentityPort =>
         createIdentity(
-          { NODE_ENV: config.get('NODE_ENV', { infer: true }), DEV_IDENTITY: config.get('DEV_IDENTITY', { infer: true }) },
+          {
+            NODE_ENV: config.get('NODE_ENV', { infer: true }),
+            DEV_IDENTITY: config.get('DEV_IDENTITY', { infer: true }),
+          },
           accounts,
           verifier,
         ),
@@ -113,15 +110,42 @@ const RECOVERED = Symbol('RECOVERED');
           refillTo: config.get('CHIPS_DAILY_REFILL_TO', { infer: true }),
         }),
     },
+    {
+      provide: RecoveryRunner,
+      inject: [ConfigService, DATABASE_URL, PrismaService, TableDirector],
+      useFactory: (
+        config: ConfigService<Env, true>,
+        databaseUrl: string,
+        prisma: PrismaService,
+        director: TableDirector,
+      ): RecoveryRunner => {
+        const logger = new Logger('Recovery');
+        // A session-level lock: the session pooler (DIRECT_URL), never the transaction pooler.
+        const url = config.get('DIRECT_URL', { infer: true }) ?? databaseUrl;
+        return new RecoveryRunner({
+          lock: new InstanceLock({ url, logger }),
+          recovery: new RecoveryService(prisma),
+          liveTableIds: () => new Set(director.tables().map((t) => t.id)),
+          logger,
+        });
+      },
+    },
     TableGateway,
   ],
   exports: [IDENTITY, ACCOUNTS, NICKNAMES, TableDirector, TableGateway],
 })
-export class TablesModule implements BeforeApplicationShutdown, OnApplicationShutdown {
+export class TablesModule
+  implements OnApplicationBootstrap, BeforeApplicationShutdown, OnApplicationShutdown
+{
   constructor(
     private readonly director: TableDirector,
     private readonly gateway: TableGateway,
+    private readonly recovery: RecoveryRunner,
   ) {}
+
+  onApplicationBootstrap(): void {
+    this.recovery.start();
+  }
 
   /**
    * Nest closes the Socket.IO server between `beforeApplicationShutdown` and `onApplicationShutdown`
@@ -131,6 +155,8 @@ export class TablesModule implements BeforeApplicationShutdown, OnApplicationShu
   async beforeApplicationShutdown(): Promise<void> {
     await this.director.shutdown();
     await this.gateway.closeConnections();
+    // Last: the next instance may now recover whatever is left (nothing, after a clean drain).
+    await this.recovery.stop();
   }
 
   /** Idempotent backstop: nothing is left open by now. */

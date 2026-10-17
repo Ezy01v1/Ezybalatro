@@ -39,7 +39,7 @@ docs/
 - **Auth:** cuenta de invitado al primer arranque + vincular Google/Apple/email sin perder progreso — proveedor según ADR 0005.
 - **Jobs/colas:** ninguno en MVP (pg-boss si aparece la necesidad).
 - **Redis:** ninguno en MVP. Una sola instancia del servidor con el estado de mesas en memoria (ver ADR 0004 y su disparador para escalar).
-- **Hosting del servidor:** proceso persistente (WebSockets), NO serverless — decidir en Fase 0 (ADR 0006).
+- **Hosting del servidor:** proceso persistente (WebSockets), NO serverless (ADR 0006) · Render plan gratis, región Ohio, definido en `render.yaml` (ADR 0009).
 - **Tests:** Vitest + fast-check en `packages/engine` · runner por defecto de Nest en `apps/server` · jest-expo + React Native Testing Library en `apps/mobile` · Maestro para e2e móvil.
 - **Builds y publicación:** EAS Build / EAS Submit / EAS Update.
 - **Repo:** https://github.com/Ezy01v1/Ezybalatro.git · rama principal `main`.
@@ -56,6 +56,7 @@ Todos se corren desde la raíz. Requisitos: Node 24 (`.nvmrc`) y pnpm 10 (`packa
 - Typecheck: `pnpm typecheck` (compila antes `packages/*`)
 - Tests: `pnpm test` (todo) · `pnpm test:engine` (cobertura: `pnpm --filter @naipes/engine test:coverage`) · `pnpm test:server` (unit + e2e) · `pnpm test:mobile` · e2e móvil con Maestro: `maestro test apps/mobile/.maestro/` (requiere el CLI de Maestro y el teléfono por USB con Expo Go)
 - Build: `pnpm build` (packages + server) · bundle móvil: `pnpm export:mobile`
+- Deploy del servidor (Render, `render.yaml`): push a `main` → Render despliega cuando el CI de GitHub pasa (build: instalar, compilar y `prisma migrate deploy`). Secretos (`DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SECRET_KEY`) solo en el panel de Render; logs en el panel. Plan gratis: se duerme tras 15 min sin tráfico y despierta en ~1 min con la primera conexión. Al apagar drena las mesas hasta `SHUTDOWN_DRAIN_MS` (60 s).
 - Compilar solo los paquetes compartidos: `pnpm build:packages`
 - Migraciones (Prisma): crear/aplicar en desarrollo `pnpm db:migrate:dev` · aplicar en Supabase/producción `pnpm db:migrate:deploy` (usa `DIRECT_URL`, session pooler 5432). Tests de integración con Postgres embebido: `pnpm --filter @naipes/server test:int`.
 - Base de datos en desarrollo: con `DATABASE_URL` vacío (y `NODE_ENV` distinto de `production`) `pnpm dev:server` levanta un Postgres embebido en `apps/server/.local-db/` (ignorado por git). Para Supabase: `DATABASE_URL` = transaction pooler (6543), `DIRECT_URL` = session pooler (5432).
@@ -137,7 +138,7 @@ Notas del esqueleto:
 - **Propiedad intelectual:** no usar el nombre "Balatro" (tampoco en la ficha de la tienda), ni su arte, tipografía, música, nombres o textos de comodines. Las mecánicas generales sirven de inspiración; todo el contenido es original.
 - **Dispositivos:** Android de gama media con datos móviles es el objetivo principal; también iOS. El roguelike funciona completo sin red.
 - Idioma es-419 · BD en UTC (`timestamptz`) · el "día" de la recarga diaria y del desafío diario se define en UTC salvo que un ADR diga otra cosa.
-- Presupuesto mensual de infraestructura: <completar> (planes gratuitos al inicio).
+- Presupuesto mensual de infraestructura: $0 por ahora (solo planes gratuitos; plan pago de Render con la beta pública, ADR 0009).
 - **Datos personales:** mínimos (nickname, avatar de un set predefinido, proveedor de login). Sin uploads de fotos en MVP.
 
 ## Decisiones tomadas
@@ -151,6 +152,7 @@ Notas del esqueleto:
   - 0006 PaaS con proceso persistente (proveedor a elegir en Fase 3)
   - 0007 StyleSheet + tokens tipados (sin NativeWind)
   - 0008 Reglas de Hold'em: dead button completo con ciegas perdidas, reapertura acumulada de all-ins incompletos (TDA), timeout = check o fold + sitting out, muck automático de perdedores
+  - 0009 (2026-10-16) Render plan gratis mientras no haya presupuesto: sleep aceptado, drenado al apagar, candado de instancia (advisory lock) para los deploys sin corte
 - Decisiones rápidas sin ADR todavía:
   - Una sola app con dos modos.
   - Hold'em No-Limit, 2–6 jugadores, mesas de cash con fichas virtuales.
@@ -165,7 +167,8 @@ Notas del esqueleto:
 - **Hecho:** Fase 3a, en `main`: mesa Hold'em en tiempo real sin BD (gateway Socket.IO con identidad de desarrollo y rate limit, mesas en memoria con cola de comandos, timers de turno/desconexión/sitting out, barajado CSPRNG, bots con heurística del engine, mesa rápida con relleno de bots, cliente de consola `pnpm play`). Protocolo en `docs/protocol.md`; spec y plan en `docs/superpowers/`. Probada a mano por el usuario (2026-10-07) contra bots.
 - **Hecho:** Fase 3b, en `main`: persistencia y fichas con Prisma 7.10 sobre Supabase (proyecto original en East US, Ohio; reemplazado en la 3c): cuentas con 10.000 iniciales y recarga diaria hasta 2.000, `chip_ledger`, buy-in/cash-out y manos liquidadas en transacción, mesa "degradada" con reintentos si la base falla, recuperación de stacks al arrancar. Postgres embebido para tests y desarrollo local. Migraciones aplicadas en Supabase y probada a mano por el usuario (2026-10-08): jugar → apagar → fichas de vuelta en el wallet, conservación exacta.
 - **Hecho:** Fase 3c, en la rama `feat/phase-3c-auth-rest` (pendiente de merge): auth real con Supabase (invitado anónimo, tokens validados por JWKS en el server), REST `/v1/me` (GET/PATCH/DELETE) con Swagger en `/docs`, logs estructurados (pino + requestId) y `helmet`, borrar cuenta anonimizándola y borrando el usuario de Supabase Auth (con reintento al arrancar). Proyecto de Supabase nuevo `kptoaakzlikfcxerckxe` (Canadá, ca-central-1; pooler `aws-1-ca-central-1.pooler.supabase.com`), migraciones aplicadas. Probada a mano por el usuario (2026-10-13): `pnpm play -- --guest` contra bots, `/docs`, `DELETE /v1/me` → 204 y usuario borrado en Supabase Auth.
-- **Siguiente:** Fase 3d (despliegue) y luego el Modo Mesa en la app móvil.
+- **En curso:** Fase 3d (despliegue en Render), en la rama `feat/phase-3d-deploy`: drenado de mesas al apagar, candado de instancia y recuperación en segundo plano, `render.yaml`, ADR 0009. Spec y plan en `docs/superpowers/`. Falta: merge a `main`, crear el servicio en Render (Blueprint) con los secretos, y la prueba manual (`/health`, `pnpm play -- --guest --url https://<servicio>.onrender.com`, push con mesa abierta, cold start).
+- **Siguiente:** Modo Mesa en la app móvil (Fase 4).
 - **Deuda técnica conocida:**
   - Roguelike: mejoras de carta existen en el pipeline pero aún no hay forma de obtenerlas; consumibles solo "subir nivel de mano" (se aplican al comprar, sin inventario).
   - Los palos de las cartas se dibujan en SVG (`SuitIcon`): Android dibuja ♥/♦ de texto con la fuente de emoji (siempre rojos). En textos se usa U+FE0E.

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '../generated/prisma/client';
-import { auditChips, createTestDatabase, seedProfile, type TestDatabase } from '../db/testing/test-database';
+import {
+  auditChips,
+  createTestDatabase,
+  seedProfile,
+  type TestDatabase,
+} from '../db/testing/test-database';
 import { PrismaTableStore } from '../tables/prisma-table-store';
 import { RecoveryService } from './recovery.service';
 
@@ -93,7 +98,12 @@ describe('RecoveryService', () => {
   it('auditChips holds after recovery', async () => {
     const { tableId } = await seatedTable();
     await seedProfile(db.prisma, 'dev:bea', 800, BEA_ID);
-    await new PrismaTableStore(db.prisma).sitDown({ tableId, seat: 2, playerId: BEA_ID, buyIn: 700 });
+    await new PrismaTableStore(db.prisma).sitDown({
+      tableId,
+      seat: 2,
+      playerId: BEA_ID,
+      buyIn: 700,
+    });
     await new RecoveryService(db.prisma).recover();
     await expect(auditChips(db.prisma)).resolves.toBeUndefined();
   });
@@ -101,10 +111,36 @@ describe('RecoveryService', () => {
   it('a zero stack seat is removed without a ledger entry', async () => {
     const { tableId } = await seatedTable();
     await db.prisma.seat.updateMany({ where: { tableId, seatIndex: 1 }, data: { stack: 0n } });
-    await db.prisma.chipLedger.create({ data: { userId: null, delta: 500n, reason: 'bot_cash_out', tableId } });
+    await db.prisma.chipLedger.create({
+      data: { userId: null, delta: 500n, reason: 'bot_cash_out', tableId },
+    });
     const result = await new RecoveryService(db.prisma).recover();
     expect(result).toEqual({ seats: 2, chips: 400 });
     expect(await db.prisma.chipLedger.count({ where: { reason: 'recovery_cash_out' } })).toBe(1);
     await auditChips(db.prisma);
+  });
+
+  it('recover skips seats of excluded tables and leaves them open', async () => {
+    const live = await seatedTable();
+    const store = new PrismaTableStore(db.prisma);
+    const orphan = randomUUID();
+    await store.openTable(orphan, CONFIG as never);
+    const bea = await seedProfile(db.prisma, 'dev:bea', 1000, BEA_ID);
+    expect(await store.sitDown({ tableId: orphan, seat: 0, playerId: BEA_ID, buyIn: 400 })).toBe(
+      'ok',
+    );
+
+    const result = await new RecoveryService(db.prisma).recover({
+      exclude: () => new Set([live.tableId]),
+    });
+
+    expect(result).toEqual({ seats: 1, chips: 400 });
+    expect(await balanceOf(bea)).toBe(1000n);
+    expect(await balanceOf(live.ana)).toBe(600n);
+    expect(await db.prisma.seat.count({ where: { tableId: live.tableId } })).toBe(2);
+    const liveTable = await db.prisma.pokerTable.findUniqueOrThrow({ where: { id: live.tableId } });
+    expect(liveTable.status).not.toBe('closed');
+    const orphanTable = await db.prisma.pokerTable.findUniqueOrThrow({ where: { id: orphan } });
+    expect(orphanTable.status).toBe('closed');
   });
 });

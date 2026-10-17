@@ -25,6 +25,7 @@ describe('validateEnv', () => {
       CHIPS_INITIAL: 10000,
       CHIPS_DAILY_REFILL_TO: 2000,
       SOCKET_RATE_LIMIT_PER_SEC: 10,
+      SHUTDOWN_DRAIN_MS: 60000,
       BOT_DELAY_MIN_MS: 800,
       BOT_DELAY_MAX_MS: 2500,
       LOG_LEVEL: 'info',
@@ -33,10 +34,9 @@ describe('validateEnv', () => {
   });
 
   it('parses a comma-separated CORS allowlist', () => {
-    expect(validateEnv({ ...ID, CORS_ORIGINS: 'http://a.test, http://b.test' }).CORS_ORIGINS).toEqual([
-      'http://a.test',
-      'http://b.test',
-    ]);
+    expect(
+      validateEnv({ ...ID, CORS_ORIGINS: 'http://a.test, http://b.test' }).CORS_ORIGINS,
+    ).toEqual(['http://a.test', 'http://b.test']);
   });
 
   it('fails fast on invalid values', () => {
@@ -84,11 +84,25 @@ describe('validateEnv', () => {
   });
 
   it('requires DATABASE_URL in production without echoing any value', () => {
-    expect(() => validateEnv({ SUPABASE_URL: 'https://p.supabase.co', NODE_ENV: 'production' })).toThrow(/DATABASE_URL: required in production/);
-    expect(() => validateEnv({ SUPABASE_URL: 'https://p.supabase.co', NODE_ENV: 'production', DATABASE_URL: '' })).toThrow(/DATABASE_URL/);
-    expect(validateEnv({ SUPABASE_URL: 'https://p.supabase.co', NODE_ENV: 'production', DATABASE_URL: 'postgresql://x/y', SUPABASE_SECRET_KEY: 'sb_secret_x' }).NODE_ENV).toBe(
-      'production',
-    );
+    expect(() =>
+      validateEnv({ SUPABASE_URL: 'https://p.supabase.co', NODE_ENV: 'production' }),
+    ).toThrow(/DATABASE_URL: required in production/);
+    expect(() =>
+      validateEnv({
+        SUPABASE_URL: 'https://p.supabase.co',
+        NODE_ENV: 'production',
+        DATABASE_URL: '',
+      }),
+    ).toThrow(/DATABASE_URL/);
+    expect(
+      validateEnv({
+        SUPABASE_URL: 'https://p.supabase.co',
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://x/y',
+        DIRECT_URL: 'postgresql://x/z',
+        SUPABASE_SECRET_KEY: 'sb_secret_x',
+      }).NODE_ENV,
+    ).toBe('production');
   });
 });
 
@@ -107,6 +121,7 @@ describe('tableSettingsFromEnv', () => {
       botDelayMs: { min: 800, max: 2500 },
       devWalletInitial: 10000,
       socketRateLimitPerSec: 10,
+      shutdownDrainMs: 60000,
     });
   });
 });
@@ -124,14 +139,23 @@ describe('identity env', () => {
 
   it('DEV_IDENTITY=true outside production makes SUPABASE_URL optional', () => {
     expect(validateEnv({ DEV_IDENTITY: 'true' }).SUPABASE_URL).toBeUndefined();
-    expect(validateEnv({ DEV_IDENTITY: 'true', NODE_ENV: 'test', SUPABASE_URL: SUPA }).DEV_IDENTITY).toBe(true);
+    expect(
+      validateEnv({ DEV_IDENTITY: 'true', NODE_ENV: 'test', SUPABASE_URL: SUPA }).DEV_IDENTITY,
+    ).toBe(true);
   });
 
   it('DEV_IDENTITY=true in production fails startup', () => {
     expect(() =>
-      validateEnv({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://x/y', SUPABASE_URL: SUPA, DEV_IDENTITY: 'true' }),
+      validateEnv({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://x/y',
+        SUPABASE_URL: SUPA,
+        DEV_IDENTITY: 'true',
+      }),
     ).toThrow(/DEV_IDENTITY/);
-    expect(() => validateEnv({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://x/y' })).toThrow(/SUPABASE_URL/);
+    expect(() => validateEnv({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://x/y' })).toThrow(
+      /SUPABASE_URL/,
+    );
   });
 
   it('rejects malformed DEV_IDENTITY and SUPABASE_URL values', () => {
@@ -142,10 +166,35 @@ describe('identity env', () => {
 
   it('SUPABASE_SECRET_KEY: optional outside production, required in production, never echoed', () => {
     expect(validateEnv({ SUPABASE_URL: SUPA }).SUPABASE_SECRET_KEY).toBeUndefined();
-    expect(validateEnv({ SUPABASE_URL: SUPA, SUPABASE_SECRET_KEY: '' }).SUPABASE_SECRET_KEY).toBeUndefined();
-    const prod = { NODE_ENV: 'production', DATABASE_URL: 'postgresql://x/y', SUPABASE_URL: SUPA };
+    expect(
+      validateEnv({ SUPABASE_URL: SUPA, SUPABASE_SECRET_KEY: '' }).SUPABASE_SECRET_KEY,
+    ).toBeUndefined();
+    const prod = {
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://x/y',
+      DIRECT_URL: 'postgresql://x/z',
+      SUPABASE_URL: SUPA,
+    };
     expect(() => validateEnv(prod)).toThrow(/SUPABASE_SECRET_KEY: required in production/);
-    expect(validateEnv({ ...prod, SUPABASE_SECRET_KEY: 'sb_secret_abc' }).SUPABASE_SECRET_KEY).toBe('sb_secret_abc');
-    expect(() => validateEnv({ ...prod, SUPABASE_SECRET_KEY: 'sb_secret_abc', PORT: 'x' })).not.toThrow(/sb_secret_abc/);
+    expect(validateEnv({ ...prod, SUPABASE_SECRET_KEY: 'sb_secret_abc' }).SUPABASE_SECRET_KEY).toBe(
+      'sb_secret_abc',
+    );
+    expect(() =>
+      validateEnv({ ...prod, SUPABASE_SECRET_KEY: 'sb_secret_abc', PORT: 'x' }),
+    ).not.toThrow(/sb_secret_abc/);
+  });
+
+  it('DIRECT_URL is required in production (instance lock), never echoed', () => {
+    const prod = {
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://u:secretpw@h:6543/db',
+      SUPABASE_URL: SUPA,
+      SUPABASE_SECRET_KEY: 'sb_secret_abc',
+    };
+    expect(() => validateEnv(prod)).toThrow(/DIRECT_URL: required in production/);
+    expect(() => validateEnv(prod)).not.toThrow(/secretpw/);
+    expect(validateEnv({ ...prod, DIRECT_URL: 'postgresql://u:p@h:5432/db' }).DIRECT_URL).toBe(
+      'postgresql://u:p@h:5432/db',
+    );
   });
 });

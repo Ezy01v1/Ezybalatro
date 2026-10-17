@@ -19,6 +19,8 @@ export interface TableSettings {
   botDelayMs: { min: number; max: number };
   devWalletInitial: number;
   socketRateLimitPerSec: number;
+  /** On shutdown, how long tables may take to finish their hand in progress (ADR 0004). */
+  shutdownDrainMs: number;
 }
 
 export function tableSettingsFromEnv(env: Env): TableSettings {
@@ -41,5 +43,6 @@ export function tableSettingsFromEnv(env: Env): TableSettings {
     botDelayMs: { min: env.BOT_DELAY_MIN_MS, max: env.BOT_DELAY_MAX_MS },
     devWalletInitial: env.CHIPS_INITIAL,
     socketRateLimitPerSec: env.SOCKET_RATE_LIMIT_PER_SEC,
+    shutdownDrainMs: env.SHUTDOWN_DRAIN_MS,
   };
 }

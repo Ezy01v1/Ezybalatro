@@ -1,0 +1,42 @@
+# Render Blueprint (ADR 0009): the game server on the free plan.
+# Node version comes from .nvmrc. Secrets (sync: false) are entered once in the Render dashboard.
+services:
+  - type: web
+    name: naipes-server
+    runtime: node
+    plan: free
+    # Closest to the Supabase database (ca-central-1). Cannot be changed after creation.
+    region: ohio
+    branch: main
+    # Deploy only once the GitHub CI checks pass.
+    autoDeployTrigger: checksPass
+    # pre-deploy commands are paid-only: migrations run at the end of the build, so a failing
+    # migration fails the build and the previous version keeps running.
+    buildCommand: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile --prod=false &&
+      pnpm build &&
+      pnpm db:migrate:deploy
+    startCommand: node apps/server/dist/src/main.js
+    healthCheckPath: /health
+    # Room for the table drain (SHUTDOWN_DRAIN_MS) plus closing connections and the database.
+    maxShutdownDelaySeconds: 90
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        value: https://kptoaakzlikfcxerckxe.supabase.co
+      - key: LOG_LEVEL
+        value: info
+      - key: DEV_IDENTITY
+        value: 'false'
+      - key: SHUTDOWN_DRAIN_MS
+        value: '60000'
+      # Transaction pooler (port 6543).
+      - key: DATABASE_URL
+        sync: false
+      # Session pooler (port 5432): migrations and the instance lock.
+      - key: DIRECT_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false

@@ -18,26 +18,36 @@ export interface RecoveryResult {
 export class RecoveryService {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async recover(): Promise<RecoveryResult> {
-    const seats = await this.prisma.$queryRaw<{ id: string }[]>`
-      SELECT id::text AS id FROM seats ORDER BY created_at, id`;
+  /**
+   * `exclude` lists the tables alive in this process (evaluated before each seat): their seats and
+   * rows are left alone, so recovery can run while this process already serves tables.
+   */
+  async recover(opts: { exclude?: () => ReadonlySet<string> } = {}): Promise<RecoveryResult> {
+    const exclude = opts.exclude ?? (() => new Set<string>());
+    const seats = await this.prisma.$queryRaw<{ id: string; table_id: string }[]>`
+      SELECT id::text AS id, table_id::text AS table_id FROM seats ORDER BY created_at, id`;
     let count = 0;
     let chips = 0n;
-    for (const { id } of seats) {
+    for (const { id, table_id } of seats) {
+      if (exclude().has(table_id)) continue;
       const returned = await this.recoverSeat(id);
       if (returned === null) continue;
       count += 1;
       chips += returned;
     }
+    const live = [...exclude()];
     await this.prisma.$executeRaw`
-      UPDATE tables SET status = 'closed', closed_at = now() WHERE status <> 'closed'`;
+      UPDATE tables SET status = 'closed', closed_at = now()
+      WHERE status <> 'closed' AND NOT (id::text = ANY(${live}::text[]))`;
     return { seats: count, chips: Number(chips) };
   }
 
   /** The stack returned, or null when another run already recovered the seat. */
   private recoverSeat(seatId: string): Promise<bigint | null> {
     return this.prisma.$transaction(async (tx) => {
-      const deleted = await tx.$queryRaw<{ table_id: string; user_id: string | null; stack: bigint }[]>`
+      const deleted = await tx.$queryRaw<
+        { table_id: string; user_id: string | null; stack: bigint }[]
+      >`
         DELETE FROM seats WHERE id = ${seatId}::uuid
         RETURNING table_id::text AS table_id, user_id::text AS user_id, stack`;
       const seat = deleted[0];

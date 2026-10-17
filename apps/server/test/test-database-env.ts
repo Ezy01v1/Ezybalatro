@@ -9,6 +9,8 @@ import { createTestDatabase, type TestDatabase } from '../src/db/testing/test-da
 export async function startE2eDatabase(): Promise<TestDatabase> {
   const db = await createTestDatabase();
   process.env.DATABASE_URL = db.url;
+  // The instance lock connects through DIRECT_URL: keep it on this database, never the developer's.
+  process.env.DIRECT_URL = db.url;
   // The e2e suites connect as `dev:<name>`: opt in explicitly (it is off by default).
   process.env.DEV_IDENTITY = 'true';
   return db;

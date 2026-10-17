@@ -53,7 +53,7 @@ async function connect(config: ConfigService<Env, true>): Promise<{ url: string;
     },
     PrismaService,
   ],
-  exports: [PrismaService],
+  exports: [PrismaService, DATABASE_URL],
 })
 export class DbModule implements OnApplicationShutdown {
   constructor(

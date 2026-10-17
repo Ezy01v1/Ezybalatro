@@ -62,6 +62,9 @@ export class TableDirector {
   /** In-flight quick seats: concurrent calls of the same user share one. */
   private readonly pending = new Map<string, Promise<QuickSeatResult>>();
   private shuttingDown = false;
+  private shutdownPromise: Promise<void> | null = null;
+  /** Re-checked whenever a table may have gone quiet while draining. */
+  private readonly drainWatchers = new Set<() => void>();
   /** Users being evicted or already evicted (deleted accounts): quick seat rejects them. */
   private readonly evicted = new Set<string>();
   /** Called whenever a seat is freed or a table closes (evictions waiting for a seat to go). */
@@ -126,7 +129,9 @@ export class TableDirector {
       const inFlight = this.pending.get(userId);
       if (inFlight) await inFlight;
       for (;;) {
-        const holding = this.tables().filter((t) => t.status !== 'closed' && t.seatOf(userId) !== null);
+        const holding = this.tables().filter(
+          (t) => t.status !== 'closed' && t.seatOf(userId) !== null,
+        );
         if (holding.length === 0) return 'done';
         if (expired) {
           this.evicted.delete(userId);
@@ -137,7 +142,10 @@ export class TableDirector {
           // Already `leaving` is fine: the seat goes when the hand is saved.
           if (!table.isLeavePending(userId)) await table.leave(userId);
         }
-        if (this.tables().some((t) => t.status !== 'closed' && t.seatOf(userId) !== null) && !expired) {
+        if (
+          this.tables().some((t) => t.status !== 'closed' && t.seatOf(userId) !== null) &&
+          !expired
+        ) {
           await changed;
         }
       }
@@ -152,12 +160,42 @@ export class TableDirector {
     this.evicted.delete(userId);
   }
 
-  /** No new hand starts anywhere; then every table is closed (hands voided, everybody cashed out). */
-  async shutdown(): Promise<void> {
+  /**
+   * Drains, then closes every table (ADR 0004): no new seat and no new hand anywhere; each table
+   * finishes and saves its hand in progress, up to `shutdownDrainMs`; then every table closes
+   * (a hand still running at the cap is voided) and everybody is cashed out. Idempotent.
+   */
+  shutdown(): Promise<void> {
+    this.shutdownPromise ??= this.drainAndClose();
+    return this.shutdownPromise;
+  }
+
+  private async drainAndClose(): Promise<void> {
     this.shuttingDown = true;
     const tables = this.tables();
     for (const table of tables) table.stopDealing();
+    const busy = () =>
+      tables.filter((t) => t.status !== 'closed' && (t.isHandInProgress() || t.degraded));
+    if (busy().length > 0) {
+      const capMs = this.deps.settings.shutdownDrainMs;
+      this.deps.logger.log?.(`Draining ${busy().length} table(s), up to ${capMs / 1000}s`);
+      let timer: Timer | null = null;
+      const timedOut = await new Promise<boolean>((resolve) => {
+        const check = () => {
+          if (busy().length === 0) resolve(false);
+        };
+        this.drainWatchers.add(check);
+        timer = this.deps.scheduler.schedule(capMs, () => resolve(true));
+      });
+      (timer as Timer | null)?.cancel();
+      this.drainWatchers.clear();
+      if (timedOut) this.deps.logger.warn(`Drain timed out; voiding ${busy().length} hand(s)`);
+    }
     await Promise.all(tables.map((table) => table.close('shutdown')));
+  }
+
+  private notifyDrainWatchers(): void {
+    for (const watcher of [...this.drainWatchers]) watcher();
   }
 
   // ------------------------------------------------------------ quick seat
@@ -182,8 +220,11 @@ export class TableDirector {
       try {
         await entry.opened;
       } catch (error) {
-        const detail = error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error thrown';
-        this.deps.logger.warn(`Table ${table.id} failed to open; skipped for quick seat: ${detail}`);
+        const detail =
+          error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error thrown';
+        this.deps.logger.warn(
+          `Table ${table.id} failed to open; skipped for quick seat: ${detail}`,
+        );
         continue;
       }
       if (this.entries.get(table.id) !== entry) continue;
@@ -262,10 +303,19 @@ export class TableDirector {
     const { settings, scheduler, deckSource, store, logger } = this.deps;
     const id = this.deps.newTableId();
     const hooks: TableHooks = {
-      afterHand: () => void this.rebalance(entry),
+      afterHand: () => {
+        void this.rebalance(entry);
+        this.notifyDrainWatchers();
+      },
       playerLeft: (table, playerId) => this.onPlayerLeft(entry, table, playerId),
-      changed: () => this.checkEmpty(entry),
-      closed: () => this.onClosed(entry),
+      changed: () => {
+        this.checkEmpty(entry);
+        this.notifyDrainWatchers();
+      },
+      closed: () => {
+        this.onClosed(entry);
+        this.notifyDrainWatchers();
+      },
     };
     const runtime = new TableRuntime({
       id,
