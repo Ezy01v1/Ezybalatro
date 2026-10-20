@@ -12,10 +12,10 @@ El ADR 0006 eligió un PaaS con una instancia persistente "sin sleep" y dejó el
 4. **Fly.io, Railway:** sin plan gratis útil. **Vercel, Netlify:** sin WebSockets persistentes.
 
 ## Decisión
-**Render `free`, región `ohio`**, servicio definido en `render.yaml`: runtime Node nativo (sin Docker; versión desde `.nvmrc`), build = instalar + compilar + `prisma migrate deploy` (al no haber pre-deploy gratis, una migración fallida hace fallar el build y sigue la versión anterior), auto-deploy solo con CI verde (`autoDeployTrigger: checksPass`), health check en `/health`, `maxShutdownDelaySeconds: 90`. Secretos (`DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SECRET_KEY`) solo en el panel de Render.
+**Render `free`, región `ohio`**, servicio definido en `render.yaml`: runtime Node nativo (sin Docker; versión desde `.nvmrc`), build = instalar + compilar + `prisma migrate deploy` (al no haber pre-deploy gratis, una migración fallida hace fallar el build y sigue la versión anterior), auto-deploy solo con CI verde (`autoDeployTrigger: checksPass`), health check en `/health`. El plan gratis no permite cambiar `maxShutdownDelaySeconds` (lo rechaza el Blueprint): Render espera su valor por defecto, 30 s, antes de `SIGKILL`. Secretos (`DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SECRET_KEY`) solo en el panel de Render.
 
 Para convivir con los deploys sin corte:
-- **Drenado** al recibir `SIGTERM`: no se reparten manos nuevas y se espera a que terminen las actuales, hasta `SHUTDOWN_DRAIN_MS` (60 s); después se cierran las mesas y se paga a todos.
+- **Drenado** al recibir `SIGTERM`: no se reparten manos nuevas y se espera a que terminen las actuales, hasta `SHUTDOWN_DRAIN_MS` (20 s en Render, para caber en los 30 s; 60 s por defecto en el código); después se cierran las mesas y se paga a todos.
 - **Candado de instancia:** advisory lock de sesión de Postgres por `DIRECT_URL` (session pooler). La recuperación de asientos al arrancar corre en segundo plano y solo después de que la instancia anterior suelta el candado; nunca toca las mesas vivas del proceso. Si la conexión del candado se cae, un latido cada 10 s reconecta y lo vuelve a tomar. La propiedad del candado es "de mejor esfuerzo": la seguridad de las fichas no depende de él, sino de que cada pago de un asiento es un borrado condicional (nunca se paga dos veces).
 
 ## Consecuencias

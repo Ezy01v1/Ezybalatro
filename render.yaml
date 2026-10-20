@@ -19,8 +19,8 @@ services:
       pnpm db:migrate:deploy
     startCommand: node apps/server/dist/src/main.js
     healthCheckPath: /health
-    # Room for the table drain (SHUTDOWN_DRAIN_MS) plus closing connections and the database.
-    maxShutdownDelaySeconds: 90
+    # The free plan does not allow maxShutdownDelaySeconds: Render waits its default 30 s before
+    # SIGKILL, so the table drain (SHUTDOWN_DRAIN_MS) stays well under it.
     envVars:
       - key: NODE_ENV
         value: production
@@ -31,7 +31,7 @@ services:
       - key: DEV_IDENTITY
         value: 'false'
       - key: SHUTDOWN_DRAIN_MS
-        value: '60000'
+        value: '20000'
       # Transaction pooler (port 6543).
       - key: DATABASE_URL
         sync: false
