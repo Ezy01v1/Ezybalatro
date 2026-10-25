@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mesa · layout</title>
+<style>
+  body{margin:0;padding:20px;background:#f3f3f5;font-family:system-ui,sans-serif;color:#1b1b1f}
+  h2{margin:0 0 6px}.sub{color:#666;margin:0 0 20px;font-size:14px}
+  .opts{display:flex;flex-wrap:wrap;gap:24px;justify-content:center}
+  .opt{width:280px;background:#fff;border:2px solid #ddd;border-radius:14px;padding:12px;cursor:pointer}
+  .opt.selected{border-color:#C9A35A;box-shadow:0 0 0 3px #C9A35A55}
+  .opt h3{margin:10px 0 4px;font-size:16px}.opt p{margin:0;font-size:13px;color:#555;line-height:1.35}
+  .phone{width:250px;height:500px;background:#0E1714;border:2px solid #C9A35A;border-radius:22px;position:relative;overflow:hidden;color:#F1EBDD;font-size:10px;margin:0 auto}
+  .st{position:absolute;width:58px;text-align:center}
+  .av{width:30px;height:30px;border-radius:50%;background:#16231F;border:1px solid #C9A35A;margin:0 auto 2px;display:flex;align-items:center;justify-content:center;font-size:9px}
+  .stk{color:#E7C873;font-size:9px}
+  .on .av{box-shadow:0 0 0 2px #4FB3A1}
+  .felt{position:absolute;background:#16231F;border:1px solid #C9A35A66}
+  .pc{display:inline-block;width:22px;height:31px;background:#F1EBDD;color:#0E1714;border-radius:3px;margin:1px;font-weight:700;font-size:10px;line-height:31px;text-align:center;vertical-align:middle}
+  .pc.r{color:#D1495B}.pc.b{background:#16231F;border:1px solid #C9A35A}
+  .big .pc{width:40px;height:56px;line-height:56px;font-size:16px}
+  .huge .pc{width:52px;height:74px;line-height:74px;font-size:20px}
+  .pot{color:#E7C873;font-weight:700;text-align:center;margin-top:4px}
+  .acts{position:absolute;left:8px;right:8px;bottom:8px;display:flex;gap:4px}
+  .bt{flex:1;padding:9px 0;text-align:center;border-radius:8px;background:#16231F;border:1px solid #C9A35A;font-weight:700}
+  .bt.p{background:#C9A35A;color:#0E1714}
+  .qk{position:absolute;left:8px;right:8px;bottom:46px;display:flex;gap:3px}
+  .qk span{flex:1;font-size:8px;text-align:center;border:1px solid #4FB3A1;border-radius:10px;padding:3px 0;color:#4FB3A1}
+  .lb{position:absolute;top:6px;left:0;right:0;text-align:center;font-size:8px;color:#C9A35A;letter-spacing:1px}
+  .ab{position:absolute;left:0;right:0;text-align:center}
+  .rw{position:absolute;top:24px;left:0;right:0;display:flex;justify-content:space-around;padding:0 4px;text-align:center}
+</style></head><body>
+<h2>¿Cómo se acomoda la mesa en vertical (360 px, una mano)?</h2>
+<p class="sub">Wireframes en paleta Gran Salón. Fíjate en dónde quedan los rivales, el board y el bote, y que tus cartas y botones estén al alcance del pulgar. Toca la que prefieras.</p>
+
+<div class="opts">
+
+<div class="opt" data-choice="a" onclick="pick(this)">
+  <div class="phone">
+    <div class="lb">MESA · CIEGAS 10/20</div>
+    <div class="felt" style="left:30px;right:30px;top:60px;height:250px;border-radius:120px"></div>
+    <div class="st" style="left:96px;top:28px"><div class="av">Rita</div><div class="stk">1.240</div></div>
+    <div class="st" style="left:6px;top:110px"><div class="av">Leo</div><div class="stk">860</div></div>
+    <div class="st on" style="right:6px;top:110px"><div class="av">Sol</div><div class="stk">2.000</div></div>
+    <div class="st" style="left:6px;top:220px"><div class="av">Ana</div><div class="stk">540</div></div>
+    <div class="st" style="right:6px;top:220px"><div class="av">Bot</div><div class="stk">1.100</div></div>
+    <div class="ab" style="top:150px"><span class="pc">A</span><span class="pc r">K</span><span class="pc">7</span><span class="pc b"></span><span class="pc b"></span><div class="pot">Bote 320</div></div>
+    <div class="ab big" style="top:325px"><span class="pc r">Q</span><span class="pc r">Q</span><div class="stk">Tú · 1.480</div></div>
+    <div class="qk"><span>Mín</span><span>½ bote</span><span>Bote</span><span>Todo</span></div>
+    <div class="acts"><span class="bt">Retirarse</span><span class="bt">Pagar 40</span><span class="bt p">Subir</span></div>
+  </div>
+  <h3>A · Óvalo clásico</h3>
+  <p>La mesa de siempre vista desde arriba, con los 5 rivales alrededor. Es la más reconocible, pero los asientos quedan chicos.</p>
+</div>
+
+<div class="opt" data-choice="b" onclick="pick(this)">
+  <div class="phone">
+    <div class="lb">MESA · CIEGAS 10/20</div>
+    <div class="rw">
+      <div><div class="av">Rita</div><div class="stk">1.240</div></div>
+      <div><div class="av">Leo</div><div class="stk">860</div></div>
+      <div class="on"><div class="av">Sol</div><div class="stk">2.000</div></div>
+      <div><div class="av">Ana</div><div class="stk">540</div></div>
+      <div><div class="av">Bot</div><div class="stk">1.100</div></div>
+    </div>
+    <div class="felt" style="left:12px;right:12px;top:100px;height:150px;border-radius:14px"></div>
+    <div class="ab big" style="top:132px"><span class="pc">A</span><span class="pc r">K</span><span class="pc">7</span><span class="pc b"></span><span class="pc b"></span><div class="pot" style="font-size:13px">Bote 320</div></div>
+    <div class="ab huge" style="top:270px"><span class="pc r">Q</span><span class="pc r">Q</span><div class="stk" style="font-size:11px">Tú · 1.480</div></div>
+    <div class="qk"><span>Mín</span><span>½ bote</span><span>Bote</span><span>Todo</span></div>
+    <div class="acts"><span class="bt">Retirarse</span><span class="bt">Pagar 40</span><span class="bt p">Subir</span></div>
+  </div>
+  <h3>B · Rivales en fila arriba</h3>
+  <p>Los rivales en una franja arriba, el board grande al centro y tus cartas enormes abajo. Es la más legible con una mano, aunque se siente menos "mesa".</p>
+</div>
+
+<div class="opt" data-choice="c" onclick="pick(this)">
+  <div class="phone">
+    <div class="lb">MESA · CIEGAS 10/20</div>
+    <div class="felt" style="left:-60px;right:-60px;top:80px;height:330px;border-radius:50% 50% 0 0"></div>
+    <div class="st" style="left:2px;top:150px"><div class="av">Leo</div><div class="stk">860</div></div>
+    <div class="st" style="left:30px;top:62px"><div class="av">Rita</div><div class="stk">1.240</div></div>
+    <div class="st on" style="left:96px;top:26px"><div class="av">Sol</div><div class="stk">2.000</div></div>
+    <div class="st" style="right:30px;top:62px"><div class="av">Ana</div><div class="stk">540</div></div>
+    <div class="st" style="right:2px;top:150px"><div class="av">Bot</div><div class="stk">1.100</div></div>
+    <div class="ab" style="top:170px"><span class="pc">A</span><span class="pc r">K</span><span class="pc">7</span><span class="pc b"></span><span class="pc b"></span><div class="pot">Bote 320</div></div>
+    <div class="ab big" style="top:290px"><span class="pc r">Q</span><span class="pc r">Q</span><div class="stk">Tú · 1.480</div></div>
+    <div class="qk"><span>Mín</span><span>½ bote</span><span>Bote</span><span>Todo</span></div>
+    <div class="acts"><span class="bt">Retirarse</span><span class="bt">Pagar 40</span><span class="bt p">Subir</span></div>
+  </div>
+  <h3>C · Arco (media mesa)</h3>
+  <p>Solo la mitad de arriba de la mesa, con los rivales en arco frente a ti, como si estuvieras sentado. Un punto medio entre A y B.</p>
+</div>
+
+</div>
+<script>
+function pick(el){
+  document.querySelectorAll('.opt').forEach(o=>o.classList.remove('selected'));
+  el.classList.add('selected');
+  if (window.toggleSelect) { try { window.toggleSelect(el); el.classList.add('selected'); } catch (e) {} }
+}
+</script>
+</body></html>

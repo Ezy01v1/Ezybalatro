@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Menú principal</title>
+<style>
+  body{margin:0;padding:20px;background:#f3f3f5;font-family:system-ui,sans-serif;color:#1b1b1f}
+  h2{margin:0 0 6px}.sub{color:#666;margin:0 0 20px;font-size:14px}
+  .opts{display:flex;flex-wrap:wrap;gap:24px;justify-content:center}
+  .opt{width:280px;background:#fff;border:2px solid #ddd;border-radius:14px;padding:12px;cursor:pointer}
+  .opt.selected{border-color:#C9A35A;box-shadow:0 0 0 3px #C9A35A55}
+  .opt h3{margin:10px 0 4px;font-size:16px}.opt p{margin:0;font-size:13px;color:#555;line-height:1.35}
+  .phone{width:250px;height:500px;background:#0E1714;border:2px solid #C9A35A;border-radius:22px;position:relative;overflow:hidden;color:#F1EBDD;font-size:11px;margin:0 auto}
+  .title{font-weight:800;letter-spacing:3px;color:#C9A35A;text-align:center;font-size:18px}
+  .wal{color:#E7C873;font-weight:700}
+  .mode{background:#16231F;border:1px solid #C9A35A;border-radius:14px;padding:14px}
+  .mode b{display:block;font-size:15px;margin-bottom:4px}.mode small{color:#F1EBDDaa}
+  .cta{background:#C9A35A;color:#0E1714;border-radius:10px;padding:10px;text-align:center;font-weight:800;margin-top:10px}
+  .ghost{border:1px solid #C9A35A;border-radius:10px;padding:10px;text-align:center;font-weight:700;margin-top:8px}
+  .tabs{position:absolute;left:0;right:0;bottom:0;display:flex;border-top:1px solid #C9A35A55;background:#16231F}
+  .tabs span{flex:1;text-align:center;padding:12px 0;font-size:10px}.tabs .on{color:#C9A35A;font-weight:800}
+  .top{display:flex;justify-content:space-between;align-items:center;padding:12px 14px 4px}
+  .tag{display:inline-block;font-size:9px;color:#4FB3A1;border:1px solid #4FB3A1;border-radius:8px;padding:1px 6px;margin-top:6px}
+</style></head><body>
+<h2>Menú principal: ¿cómo se presentan los dos modos?</h2>
+<p class="sub">La app abre aquí. Arriba van tu saldo de fichas (Mesa) y el acceso al perfil (llega en la 4c). Toca la que prefieras.</p>
+<div class="opts">
+
+<div class="opt" data-choice="a" onclick="pick(this)">
+  <div class="phone">
+    <div class="top"><span class="wal">🪙 10.000</span><span>⚙</span></div>
+    <div class="title" style="margin:18px 0 22px">NAIPES</div>
+    <div style="padding:0 14px;display:flex;flex-direction:column;gap:14px">
+      <div class="mode"><b>Roguelike</b><small>Un jugador · sin conexión</small><div class="tag">Run en curso · Nivel 3</div><div class="cta">Continuar run</div><div class="ghost" style="padding:7px">Nueva run</div></div>
+      <div class="mode"><b>Mesa</b><small>Hold'em en vivo · fichas virtuales</small><div class="cta">Mesa rápida</div></div>
+    </div>
+  </div>
+  <h3>A · Dos tarjetas grandes</h3>
+  <p>Cada modo con su tarjeta y su botón principal ("Continuar run" y "Mesa rápida"). Se llega a jugar con un solo toque.</p>
+</div>
+
+<div class="opt" data-choice="b" onclick="pick(this)">
+  <div class="phone">
+    <div class="top"><span class="wal">🪙 10.000</span><span>⚙</span></div>
+    <div class="title" style="margin:30px 0 30px">NAIPES</div>
+    <div style="padding:0 14px">
+      <div class="mode" style="text-align:center"><b>Roguelike</b><small>Run en curso · Nivel 3</small><div class="cta">Continuar run</div><div class="ghost">Nueva run</div><div class="ghost">Jugar con semilla</div></div>
+    </div>
+    <div class="tabs"><span class="on">♠ Roguelike</span><span>♣ Mesa</span><span>☺ Perfil</span></div>
+  </div>
+  <h3>B · Pestañas abajo</h3>
+  <p>Una barra inferior para cambiar de modo, cada uno con su propia pantalla de inicio. Escala bien si agregamos más secciones después.</p>
+</div>
+
+<div class="opt" data-choice="c" onclick="pick(this)">
+  <div class="phone">
+    <div class="top"><span class="wal">🪙 10.000</span><span>⚙</span></div>
+    <div class="title" style="margin:40px 0 10px">NAIPES</div>
+    <div style="text-align:center;color:#F1EBDDaa;margin-bottom:40px">Último: Roguelike · Nivel 3</div>
+    <div style="padding:0 14px">
+      <div class="cta" style="padding:16px;font-size:14px">Continuar run</div>
+      <div class="ghost" style="padding:14px">Mesa rápida</div>
+      <div style="text-align:center;margin-top:22px;color:#C9A35A">Nueva run · Jugar con semilla</div>
+    </div>
+  </div>
+  <h3>C · Un botón protagonista</h3>
+  <p>Un botón grande con lo último que jugaste y el otro modo debajo. Es lo más minimalista, aunque los modos se ven menos.</p>
+</div>
+
+</div>
+<script>
+function pick(el){document.querySelectorAll('.opt').forEach(o=>o.classList.remove('selected'));el.classList.add('selected');if(window.toggleSelect){try{window.toggleSelect(el);el.classList.add('selected')}catch(e){}}}
+</script>
+</body></html>
