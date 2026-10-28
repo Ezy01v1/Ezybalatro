@@ -18,6 +18,10 @@ export const es = {
     seededRun: 'Jugar con semilla',
     corruptSave: 'No pudimos recuperar tu run anterior. Puedes empezar una nueva.',
   },
+  table: {
+    resyncing: 'Acción no válida, actualizando la mesa…',
+    genericError: 'Algo salió mal. Inténtalo de nuevo.',
+  },
   seed: {
     title: 'Jugar con semilla',
     label: 'Semilla',
