@@ -98,7 +98,7 @@ describe('seat rotation', () => {
   it('spectator: hero null without throwing', () => {
     const m = toTableModel(makeUpdate({ mySeat: null }), T);
     expect(m.hero).toBeNull();
-    expect(m.seats).toHaveLength(5);
+    expect(m.seats.map((s) => s.seat)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 });
 
@@ -256,6 +256,14 @@ describe('action bar', () => {
       middle: { type: 'callAllIn', amount: 180 },
       right: null,
     });
+  });
+  it('call all-in hides raise even if the server sends one', () => {
+    const seats = [seat(0, 180), seat(1), null, null, null, null];
+    const m = toTableModel(
+      makeUpdate({ seats, legal: legal({ callAmount: 200, raise: { min: 400, max: 180 } }) }),
+      T,
+    );
+    expect(m.actionBar).toMatchObject({ middle: { type: 'callAllIn', amount: 200 }, right: null });
   });
   it('sitting out: sitIn', () => {
     const seats = [seat(0, 500, 'sitting_out'), seat(1), null, null, null, null];

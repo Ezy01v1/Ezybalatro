@@ -39,7 +39,8 @@ export type ActionBarModel =
     };
 
 export interface TableModel {
-  /** Rivals in oval order: 0 = lower left, then clockwise to lower right. Always `maxSeats - 1`. */
+  /** Rivals in oval order: 0 = lower left, then clockwise to lower right. `maxSeats - 1` when seated;
+   * `maxSeats` (starting at seat 0) when spectating, so no seat is dropped. */
   seats: SeatModel[];
   hero: SeatModel | null;
   board: (Card | null)[];
@@ -145,7 +146,8 @@ function actionBar(update: TableUpdate): ActionBarModel {
       : legal.raise
         ? { type: 'raise' as const, ...legal.raise }
         : null;
-    return { kind: 'turn', fold: true, middle, right };
+    // Calling all-in leaves nothing to raise with: the raise button is hidden (design 4b §1).
+    return { kind: 'turn', fold: true, middle, right: middle.type === 'callAllIn' ? null : right };
   }
   if (me?.status === 'sitting_out') return { kind: 'sitIn' };
   const toAct = view.hand?.toAct ?? null;
@@ -159,9 +161,10 @@ export function toTableModel(
 ): TableModel {
   const { view } = update;
   const n = view.config.maxSeats;
-  const anchor = view.mySeat ?? 0;
+  const anchor = view.mySeat ?? -1;
   const seats: SeatModel[] = [];
-  for (let i = 1; i < n; i++) seats.push(seatModel(update, (anchor + i) % n));
+  const count = view.mySeat === null ? n : n - 1;
+  for (let i = 1; i <= count; i++) seats.push(seatModel(update, (anchor + i) % n));
   const board: (Card | null)[] = [0, 1, 2, 3, 4].map((i) => view.hand?.board[i] ?? null);
   let timer: TableModel['timer'] = null;
   if (update.turn) {
