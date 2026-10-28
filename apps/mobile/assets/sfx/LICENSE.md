@@ -5,5 +5,7 @@ Todos los archivos `.wav` de esta carpeta son **obra original** del proyecto: se
 terceros). Se publican bajo **CC0 1.0 Universal** (dominio público):
 https://creativecommons.org/publicdomain/zero/1.0/
 
+Esto incluye `flip.wav`, `turn.wav` y `check.wav` (Modo Mesa), generados con el mismo script.
+
 Son placeholders para el MVP; si se reemplazan por sonidos de terceros, anotar aquí la fuente y la
 licencia de cada archivo.

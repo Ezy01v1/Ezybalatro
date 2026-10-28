@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
-import { haptics, playSound } from '@/game/feedback';
+import { haptics, playSound } from '@/feedback/feedback';
 import type { Playback, PlaybackStep } from '@/game/playback';
 
 export interface PlaybackView {

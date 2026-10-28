@@ -1,7 +1,7 @@
 import type { JokerInstance } from '@naipes/engine';
 import { es, JOKER_TEXTS } from '@/i18n/es';
 import { Button, Text } from '@/ui/primitives';
-import { Sheet } from './Sheet';
+import { Sheet } from '@/components/shared/Sheet';
 
 export function JokerDetailSheet({
   joker,

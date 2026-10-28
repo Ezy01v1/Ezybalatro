@@ -98,6 +98,13 @@ const recipes = {
     tone({ f0: 1568, ms: 60, gain: 0.25, decay: 8 }),
     tone({ f0: 2093, ms: 140, gain: 0.25, decay: 6, start: 50 }),
   ],
+  // Table mode: a community card turning over, "your turn" chime, and a knock for check.
+  flip: [burst({ ms: 70, gain: 0.2, decay: 14 }), tone({ f0: 520, f1: 760, ms: 70, gain: 0.12 })],
+  turn: [
+    tone({ f0: 659, ms: 90, gain: 0.28, decay: 7, harmonics: 1 }),
+    tone({ f0: 880, ms: 140, gain: 0.28, decay: 6, harmonics: 1, start: 80 }),
+  ],
+  check: [tone({ f0: 180, f1: 120, ms: 80, gain: 0.4, decay: 9 }), burst({ ms: 25, gain: 0.15 })],
 };
 
 for (const [name, parts] of Object.entries(recipes)) {

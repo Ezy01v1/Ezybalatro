@@ -1,7 +1,7 @@
 import { isCardDebuffed, previewPlay, type RunState } from '@naipes/engine';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { haptics, playSound } from '@/game/feedback';
+import { haptics, playSound } from '@/feedback/feedback';
 import { useGame } from '@/game/store';
 import { es } from '@/i18n/es';
 import { colors, layout, radii, spacing } from '@/theme/tokens';

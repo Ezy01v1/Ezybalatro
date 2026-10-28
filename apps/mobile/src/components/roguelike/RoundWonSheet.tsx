@@ -4,7 +4,7 @@ import type { RoundSummary } from '@/game/store';
 import { es } from '@/i18n/es';
 import { colors, spacing } from '@/theme/tokens';
 import { Button, Text } from '@/ui/primitives';
-import { Sheet } from './Sheet';
+import { Sheet } from '@/components/shared/Sheet';
 
 function Line({ label, amount, strong }: { label: string; amount: number; strong?: boolean }) {
   return (

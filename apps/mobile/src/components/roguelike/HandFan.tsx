@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { es } from '@/i18n/es';
 import { layout } from '@/theme/tokens';
-import { PlayingCard } from './PlayingCard';
+import { PlayingCard } from '@/components/shared/PlayingCard';
 
 export interface HandFanProps {
   cards: readonly RunCard[];

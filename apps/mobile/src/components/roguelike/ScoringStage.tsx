@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeOutUp, useReducedMotion } from 'react-native-reanimated';
 import { colors, layout, radii, spacing } from '@/theme/tokens';
 import { Text } from '@/ui/primitives';
-import { PlayingCard } from './PlayingCard';
+import { PlayingCard } from '@/components/shared/PlayingCard';
 
 /** The played cards, centered in the play zone, pulsing as the engine's steps are shown. */
 export function ScoringStage({

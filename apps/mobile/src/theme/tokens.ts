@@ -86,4 +86,29 @@ export const motion = {
   stagger: { deal: 40, play: 50, discard: 30 },
   /** The scoring playback never takes longer than this; steps get shorter instead. */
   maxScoringMs: 2500,
+  // Table mode (docs/design/fase4-mesa-diseno.md §3).
+  dealStaggerMs: 60,
+  dealMs: 220,
+  flipMs: 260,
+  chipsToPotMs: 300,
+  potToWinnerMs: 450,
+  timerLowAtMs: 5000,
+  waitingHintAfterMs: 5000,
+} as const;
+
+/** Table mode colors, built from the existing palette (no new hues). */
+export const table = {
+  felt: colors.surface,
+  feltEdge: 'rgba(201,163,90,0.4)',
+  seatEmpty: colors.border,
+  timer: colors.chips,
+  timerLow: colors.mult,
+  winner: colors.money,
+} as const;
+
+export const sizes = {
+  seatAvatar: 44,
+  heroCard: { w: 64, h: 90 },
+  boardCard: { w: 44, h: 62 },
+  actionButtonMinHeight: 48,
 } as const;

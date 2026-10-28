@@ -1,7 +1,7 @@
 import { jokerSellValue, type RunState, type ShopOffer } from '@naipes/engine';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { playSound } from '@/game/feedback';
+import { playSound } from '@/feedback/feedback';
 import { formatMoney } from '@/game/format';
 import { useGame } from '@/game/store';
 import { BOSS_TEXTS, es, HAND_NAMES, JOKER_TEXTS } from '@/i18n/es';
