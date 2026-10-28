@@ -21,6 +21,19 @@ export const es = {
   table: {
     resyncing: 'Acción no válida, actualizando la mesa…',
     genericError: 'Algo salió mal. Inténtalo de nuevo.',
+    /** Hold'em hand names at showdown (the roguelike uses HAND_NAMES). */
+    handNames: {
+      high_card: 'Carta alta',
+      pair: 'Pareja',
+      two_pair: 'Doble pareja',
+      three_of_a_kind: 'Trío',
+      straight: 'Escalera',
+      flush: 'Color',
+      full_house: 'Full',
+      four_of_a_kind: 'Póker',
+      straight_flush: 'Escalera de color',
+    } satisfies Record<HandCategory, string>,
+    royalFlush: 'Escalera real',
   },
   seed: {
     title: 'Jugar con semilla',
