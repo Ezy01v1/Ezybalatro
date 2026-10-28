@@ -3,6 +3,7 @@ import {
   BigShouldersDisplay_700Bold,
   BigShouldersDisplay_800ExtraBold,
 } from '@expo-google-fonts/big-shoulders-display';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -10,6 +11,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { queryClient } from '@/api/queryClient';
+import { ensureGuestSession } from '@/auth/session';
 import { useGame } from '@/game/store';
 import { colors } from '@/theme/tokens';
 
@@ -31,22 +34,28 @@ export default function RootLayout() {
   }, [hydrate]);
 
   useEffect(() => {
+    void ensureGuestSession();
+  }, []);
+
+  useEffect(() => {
     if (ready) void SplashScreen.hideAsync().catch(() => {});
   }, [ready]);
 
   if (!ready) return null;
 
   return (
-    <GestureHandlerRootView style={styles.root}>
-      <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: colors.bg },
-          animation: 'fade',
-        }}
-      />
-    </GestureHandlerRootView>
+    <QueryClientProvider client={queryClient}>
+      <GestureHandlerRootView style={styles.root}>
+        <StatusBar style="light" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.bg },
+            animation: 'fade',
+          }}
+        />
+      </GestureHandlerRootView>
+    </QueryClientProvider>
   );
 }
 
