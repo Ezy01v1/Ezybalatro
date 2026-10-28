@@ -8,12 +8,13 @@ import { createClient } from '@supabase/supabase-js';
 import { io } from 'socket.io-client';
 import {
   SOCKET_EVENTS,
+  connectErrorAction,
+  disconnectAction,
   type Ack,
   type SocketError,
   type TableClosed,
   type TableUpdate,
 } from '@naipes/shared';
-import { connectErrorAction, disconnectAction } from './connection-policy';
 import { HELP_TEXT, parseCommand } from './parse-command';
 import { guestConfig, parsePlayArgs, type PlayOptions } from './guest-session';
 import { renderTable } from './render';
