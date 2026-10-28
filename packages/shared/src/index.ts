@@ -63,3 +63,4 @@ export type HealthResponse = z.infer<typeof healthResponseSchema>;
 export * from './me';
 export * from './table-protocol';
 export * from './connection-policy';
+export * from './server-messages';
