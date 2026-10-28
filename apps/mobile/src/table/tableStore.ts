@@ -4,14 +4,7 @@ import { es } from '../i18n/es';
 import type { ClientEvent, TableClient } from './tableClient';
 
 export type TableStatus =
-  | 'idle'
-  | 'connecting'
-  | 'waking'
-  | 'seated'
-  | 'reconnecting'
-  | 'failed'
-  | 'closed'
-  | 'replaced';
+  'idle' | 'connecting' | 'waking' | 'seated' | 'reconnecting' | 'failed' | 'closed' | 'replaced';
 
 export interface TableState {
   status: TableStatus;
@@ -42,6 +35,8 @@ export const BACKGROUND_DISCONNECT_MS = 10000;
 
 const RESYNC_CODES = new Set(['STALE_SEQ', 'NOT_YOUR_TURN', 'INVALID_AMOUNT']);
 
+const GENERIC_ERROR: SocketError = { type: 'error', code: 'INTERNAL', message: 'Request failed' };
+
 const initial = {
   status: 'idle' as TableStatus,
   update: null,
@@ -57,6 +52,8 @@ const initial = {
 export function createTableStore(client: TableClient, now: () => number = Date.now) {
   let wakingTimer: ReturnType<typeof setTimeout> | null = null;
   let failedTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let generation = 0; // bumped by start/reset so late acks from an old attempt are ignored
   let backgroundTimer: ReturnType<typeof setTimeout> | null = null;
   let lastBuyIn: number | undefined;
   let seating = false; // a quickSeat is in flight
@@ -68,6 +65,8 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
     if (failedTimer) clearTimeout(failedTimer);
     wakingTimer = null;
     failedTimer = null;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   };
   const clearBackgroundTimer = (): void => {
     if (backgroundTimer) clearTimeout(backgroundTimer);
@@ -79,12 +78,32 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
       if (!wantSeat || seating) return;
       wantSeat = false;
       seating = true;
-      void client.quickSeat(lastBuyIn).then((ack) => {
+      const g = generation;
+      const fail = (error: SocketError | null): void => {
+        if (g !== generation) return;
         seating = false;
-        if (ack.ok) return; // the table update arrives as an event
         clearConnectTimers();
-        set({ status: 'failed', error: ack.error, pendingAction: false });
-      });
+        set({ status: 'failed', error, pendingAction: false });
+      };
+      client.quickSeat(lastBuyIn).then(
+        (ack) => {
+          if (g !== generation) return;
+          seating = false;
+          if (!ack.ok) fail(ack.error); // on success the table update arrives as an event
+        },
+        () => fail(null),
+      );
+    };
+
+    const enterReconnecting = (): void => {
+      set({ status: 'reconnecting' });
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (get().status !== 'reconnecting') return;
+        client.disconnect();
+        set({ status: 'failed' });
+      }, FAILED_AFTER_MS);
     };
 
     const handleError = (error: SocketError): void => {
@@ -104,7 +123,7 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
           else if (event.status === 'unauthorized') {
             clearConnectTimers();
             set({ status: 'failed' });
-          } else if (status === 'seated') set({ status: 'reconnecting' });
+          } else if (status === 'seated') enterReconnecting();
           break;
         case 'update': {
           const current = get().update;
@@ -141,8 +160,12 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
     client.on(onEvent);
 
     const run = async (call: () => ReturnType<TableClient['sitOut']>): Promise<void> => {
-      const ack = await call();
-      if (!ack.ok) handleError(ack.error);
+      try {
+        const ack = await call();
+        if (!ack.ok) handleError(ack.error);
+      } catch {
+        handleError(GENERIC_ERROR);
+      }
     };
 
     return {
@@ -151,6 +174,8 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
       start(buyIn) {
         if (get().status !== 'idle') return;
         lastBuyIn = buyIn;
+        generation += 1;
+        seating = false;
         wantSeat = true;
         set({ ...initial, status: 'connecting' });
         wakingTimer = setTimeout(() => {
@@ -169,15 +194,25 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
         const { update, pendingAction } = get();
         if (!update || pendingAction) return;
         set({ pendingAction: true });
-        const ack = await client.act(update.seq, action);
-        if (!ack.ok) handleError(ack.error);
+        try {
+          const ack = await client.act(update.seq, action);
+          if (!ack.ok) handleError(ack.error);
+        } catch {
+          handleError(GENERIC_ERROR);
+        }
       },
 
       sitOut: () => run(() => client.sitOut()),
       sitIn: () => run(() => client.sitIn()),
 
       async leave() {
-        const ack = await client.leave();
+        let ack: Awaited<ReturnType<TableClient['leave']>>;
+        try {
+          ack = await client.leave();
+        } catch {
+          handleError(GENERIC_ERROR);
+          return;
+        }
         if (!ack.ok) {
           handleError(ack.error);
           return;
@@ -200,6 +235,7 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
       dismissToast: () => set({ toast: null }),
 
       reset() {
+        generation += 1;
         clearConnectTimers();
         clearBackgroundTimer();
         client.disconnect();
@@ -215,7 +251,7 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
           if (droppedInBackground) {
             droppedInBackground = false;
             wantSeat = true;
-            set({ status: 'reconnecting' });
+            enterReconnecting();
             client.connect();
           }
           return;

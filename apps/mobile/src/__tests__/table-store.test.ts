@@ -7,15 +7,14 @@ function makeClient() {
   const ok = (): Promise<Ack> => Promise.resolve({ ok: true });
   const client = {
     connect: jest.fn(),
-    quickSeat: jest.fn(
-      (): Promise<Ack<{ tableId: string; seat: number }>> =>
-        Promise.resolve({ ok: true, tableId: 't1', seat: 0 }),
+    quickSeat: jest.fn((): Promise<Ack<{ tableId: string; seat: number }>> =>
+      Promise.resolve({ ok: true, tableId: 't1', seat: 0 }),
     ),
     act: jest.fn((): Promise<Ack> => ok()),
     sitOut: jest.fn((): Promise<Ack> => ok()),
     sitIn: jest.fn((): Promise<Ack> => ok()),
-    leave: jest.fn(
-      (): Promise<Ack<{ cashOut: number | null }>> => Promise.resolve({ ok: true, cashOut: 1234 }),
+    leave: jest.fn((): Promise<Ack<{ cashOut: number | null }>> =>
+      Promise.resolve({ ok: true, cashOut: 1234 }),
     ),
     sync: jest.fn(),
     disconnect: jest.fn(),
@@ -28,7 +27,14 @@ function makeClient() {
 }
 
 const upd = (seq: number): TableUpdate =>
-  ({ tableId: 't1', seq, events: [], view: { seats: [] }, turn: null, names: {} }) as unknown as TableUpdate;
+  ({
+    tableId: 't1',
+    seq,
+    events: [],
+    view: { seats: [] },
+    turn: null,
+    names: {},
+  }) as unknown as TableUpdate;
 const status = (s: Extract<ClientEvent, { type: 'status' }>['status']): ClientEvent => ({
   type: 'status',
   status: s,
@@ -116,16 +122,19 @@ describe('tableStore', () => {
     expect(store.getState().pendingAction).toBe(false);
   });
 
-  it.each(['STALE_SEQ', 'NOT_YOUR_TURN', 'INVALID_AMOUNT'])('%s sets a toast and calls sync', (code) => {
-    const { store, emit, client } = setup();
-    store.getState().start();
-    emit({ type: 'error', error: err(code) });
-    expect(store.getState().toast).toBeTruthy();
-    expect(store.getState().toast).not.toContain(code);
-    expect(client.sync).toHaveBeenCalledTimes(1);
-    store.getState().dismissToast();
-    expect(store.getState().toast).toBeNull();
-  });
+  it.each(['STALE_SEQ', 'NOT_YOUR_TURN', 'INVALID_AMOUNT'])(
+    '%s sets a toast and calls sync',
+    (code) => {
+      const { store, emit, client } = setup();
+      store.getState().start();
+      emit({ type: 'error', error: err(code) });
+      expect(store.getState().toast).toBeTruthy();
+      expect(store.getState().toast).not.toContain(code);
+      expect(client.sync).toHaveBeenCalledTimes(1);
+      store.getState().dismissToast();
+      expect(store.getState().toast).toBeNull();
+    },
+  );
 
   it('an act ack failure shows the toast and syncs', async () => {
     const { store, emit, client } = setup();
@@ -229,5 +238,73 @@ describe('tableStore', () => {
     expect(client.connect).toHaveBeenCalledTimes(2);
     store.getState().reset();
     expect(store.getState().status).toBe('idle');
+  });
+
+  it('reconnecting for 90000 ms without an update goes to failed', () => {
+    const { store, emit } = setup();
+    store.getState().start();
+    emit({ type: 'update', update: upd(1) });
+    emit(status('reconnecting'));
+    jest.advanceTimersByTime(89999);
+    expect(store.getState().status).toBe('reconnecting');
+    jest.advanceTimersByTime(1);
+    expect(store.getState().status).toBe('failed');
+  });
+
+  it('an update while reconnecting cancels the failure timer', () => {
+    const { store, emit } = setup();
+    store.getState().start();
+    emit({ type: 'update', update: upd(1) });
+    emit(status('reconnecting'));
+    jest.advanceTimersByTime(60000);
+    emit({ type: 'update', update: upd(2) });
+    jest.advanceTimersByTime(60000);
+    expect(store.getState().status).toBe('seated');
+  });
+
+  it('a background return that never gets the table goes to failed', () => {
+    const { store, emit } = setup();
+    store.getState().start();
+    emit({ type: 'update', update: upd(1) });
+    store.getState().onAppState('background');
+    jest.advanceTimersByTime(10000);
+    store.getState().onAppState('active');
+    jest.advanceTimersByTime(90000);
+    expect(store.getState().status).toBe('failed');
+  });
+
+  it('a late quickSeat failure after reset is ignored', async () => {
+    const { store, emit, client } = setup();
+    let resolve: (a: Ack<{ tableId: string; seat: number }>) => void = () => {};
+    client.quickSeat.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    store.getState().start();
+    emit(status('connected'));
+    store.getState().reset();
+    resolve({ ok: false, error: err('INTERNAL') });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(store.getState().status).toBe('idle');
+    store.getState().start();
+    emit(status('connected'));
+    expect(client.quickSeat).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejected requests clear pendingAction and show a toast', async () => {
+    const { store, emit, client } = setup();
+    store.getState().start();
+    emit({ type: 'update', update: upd(1) });
+    client.act.mockRejectedValueOnce(new Error('boom'));
+    await store.getState().act({ type: 'fold' });
+    expect(store.getState().pendingAction).toBe(false);
+    expect(store.getState().toast).toBeTruthy();
+    client.sitOut.mockRejectedValueOnce(new Error('boom'));
+    store.getState().dismissToast();
+    await store.getState().sitOut();
+    expect(store.getState().toast).toBeTruthy();
+    client.leave.mockRejectedValueOnce(new Error('boom'));
+    store.getState().dismissToast();
+    await store.getState().leave();
+    expect(store.getState().toast).toBeTruthy();
+    expect(store.getState().status).toBe('seated');
   });
 });
