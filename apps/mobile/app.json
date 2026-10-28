@@ -30,12 +30,18 @@
         }
       ],
       "expo-sqlite",
-      "expo-audio"
+      "expo-audio",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "backgroundColor": "#0E1116"
+    "backgroundColor": "#0E1116",
+    "extra": {
+      "serverUrl": "https://naipes-server.onrender.com",
+      "supabaseUrl": "https://kptoaakzlikfcxerckxe.supabase.co",
+      "supabasePublishableKey": "sb_publishable_4wca0i6htZahPVSZV67Kig_rjy_hslu"
+    }
   }
 }
