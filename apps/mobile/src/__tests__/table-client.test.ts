@@ -117,4 +117,32 @@ describe('tableClient', () => {
       payload: { tableId: 't1', seq: 7, action: { type: 'call' } },
     });
   });
+
+  it('after leave and a new quickSeat, a server disconnect reconnects; sync after leave sends nothing', async () => {
+    const { client, socket } = setup();
+    socket().connected = true;
+    socket().fire('connect');
+    await client.quickSeat();
+    await client.leave();
+    socket().emitted.length = 0;
+    client.sync();
+    expect(socket().emitted).toEqual([]);
+    await client.quickSeat();
+    socket().fire('disconnect', 'io server disconnect');
+    expect(socket().connect).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['table:closed', { tableId: 't1', reason: 'nope' }],
+    ['table:degraded', { tableId: 't1', degraded: 'x' }],
+  ])('malformed %s is reported invalid and followed by sync', async (event, payload) => {
+    const { client, events, socket } = setup();
+    socket().connected = true;
+    socket().fire('connect');
+    await client.quickSeat();
+    socket().emitted.length = 0;
+    socket().fire(event, payload);
+    expect(events.some((e) => e.type === 'invalid')).toBe(true);
+    expect(socket().emitted).toEqual([{ event: 'table:sync', payload: { tableId: 't1' } }]);
+  });
 });

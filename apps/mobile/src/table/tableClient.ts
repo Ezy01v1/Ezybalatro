@@ -141,6 +141,7 @@ export function createTableClient(deps: TableClientDeps): TableClient {
     s.on(SOCKET_EVENTS.tableClosed, (payload: unknown) => {
       if (!isTableClosed(payload)) {
         emit({ type: 'invalid' });
+        sync();
         return;
       }
       if (payload.tableId === tableId) tableId = null;
@@ -150,6 +151,7 @@ export function createTableClient(deps: TableClientDeps): TableClient {
     s.on(SOCKET_EVENTS.tableDegraded, (payload: unknown) => {
       if (!isTableDegraded(payload)) {
         emit({ type: 'invalid' });
+        sync();
         return;
       }
       emit({ type: 'degraded', degraded: payload });
@@ -188,7 +190,10 @@ export function createTableClient(deps: TableClientDeps): TableClient {
         SOCKET_EVENTS.quickSeat,
         buyIn === undefined ? {} : { buyIn },
       );
-      if (ack.ok) tableId = ack.tableId;
+      if (ack.ok) {
+        tableId = ack.tableId;
+        leaving = false;
+      }
       return ack;
     },
 
@@ -198,7 +203,10 @@ export function createTableClient(deps: TableClientDeps): TableClient {
 
     async leave() {
       const ack = await requestForTable<{ cashOut: number | null }>(SOCKET_EVENTS.leave);
-      if (ack.ok) leaving = true;
+      if (ack.ok) {
+        leaving = true;
+        tableId = null;
+      }
       return ack;
     },
 
