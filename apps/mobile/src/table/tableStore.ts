@@ -53,7 +53,7 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
   let wakingTimer: ReturnType<typeof setTimeout> | null = null;
   let failedTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let generation = 0; // bumped by start/reset so late acks from an old attempt are ignored
+  let generation = 0; // bumped by start/reset/leave so late acks from an old attempt are ignored
   let backgroundTimer: ReturnType<typeof setTimeout> | null = null;
   let lastBuyIn: number | undefined;
   let seating = false; // a quickSeat is in flight
@@ -122,7 +122,10 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
           if (event.status === 'connected') trySeat();
           else if (event.status === 'unauthorized') {
             clearConnectTimers();
-            set({ status: 'failed' });
+            set({
+              status: 'failed',
+              error: { type: 'error', code: 'UNAUTHORIZED', message: 'Session rejected' },
+            });
           } else if (status === 'seated') enterReconnecting();
           break;
         case 'update': {
@@ -141,6 +144,7 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
         }
         case 'closed':
           clearConnectTimers();
+          client.disconnect();
           set({ status: 'closed', pendingAction: false });
           break;
         case 'replaced':
@@ -217,6 +221,8 @@ export function createTableStore(client: TableClient, now: () => number = Date.n
           handleError(ack.error);
           return;
         }
+        generation += 1; // a quickSeat still in flight must not overwrite 'closed'
+        seating = false;
         clearConnectTimers();
         clearBackgroundTimer();
         client.disconnect();

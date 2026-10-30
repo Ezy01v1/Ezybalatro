@@ -172,6 +172,36 @@ describe('tableStore', () => {
     expect(store.getState().status).toBe('closed');
   });
 
+  it('unauthorized fails with an UNAUTHORIZED error', () => {
+    const { store, emit } = setup();
+    store.getState().start();
+    emit(status('unauthorized'));
+    expect(store.getState().status).toBe('failed');
+    expect(store.getState().error?.code).toBe('UNAUTHORIZED');
+  });
+
+  it('a quickSeat error arriving after a successful leave does not overwrite closed', async () => {
+    const { store, emit, client } = setup();
+    let resolveSeat!: (a: Ack<{ tableId: string; seat: number }>) => void;
+    client.quickSeat.mockReturnValueOnce(new Promise((r) => (resolveSeat = r)));
+    store.getState().start();
+    emit(status('connected'));
+    await store.getState().leave();
+    expect(store.getState().status).toBe('closed');
+    resolveSeat({ ok: false, error: err('INTERNAL') });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(store.getState().status).toBe('closed');
+  });
+
+  it('a closed table disconnects the client', () => {
+    const { store, emit, client } = setup();
+    store.getState().start();
+    emit({ type: 'update', update: upd(1) });
+    emit({ type: 'closed', closed: { tableId: 't1', reason: 'empty' } });
+    expect(client.disconnect).toHaveBeenCalled();
+  });
+
   it('start twice sends a single quickSeat', () => {
     const { store, emit, client } = setup();
     store.getState().start();
