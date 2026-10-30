@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { ActionBar } from '@/components/table/ActionBar';
 import type { ActionBarModel } from '@/table/viewModel';
 
@@ -82,5 +82,44 @@ describe('ActionBar', () => {
     await render(s.ui);
     await fireEvent.press(screen.getByRole('button', { name: 'Pasar' }));
     expect(s.onAct).not.toHaveBeenCalled();
+  });
+});
+
+describe('ActionBar pending spinner', () => {
+  const model: ActionBarModel = {
+    kind: 'turn',
+    fold: true,
+    middle: { type: 'check' },
+    right: null,
+  };
+  afterEach(() => jest.useRealTimers());
+
+  it('shows only when the action takes longer than 600 ms', async () => {
+    jest.useFakeTimers();
+    const s = setup(model, true);
+    await render(
+      <ActionBar
+        model={model}
+        disabled
+        pending
+        onAct={s.onAct}
+        onOpenBet={s.onOpenBet}
+        onSitIn={s.onSitIn}
+      />,
+    );
+    await act(() => jest.advanceTimersByTime(599));
+    expect(screen.queryByTestId('action-pending')).toBeNull();
+    await act(() => jest.advanceTimersByTime(1));
+    expect(screen.getByTestId('action-pending')).toBeTruthy();
+    await screen.rerender(
+      <ActionBar
+        model={model}
+        disabled={false}
+        onAct={s.onAct}
+        onOpenBet={s.onOpenBet}
+        onSitIn={s.onSitIn}
+      />,
+    );
+    expect(screen.queryByTestId('action-pending')).toBeNull();
   });
 });

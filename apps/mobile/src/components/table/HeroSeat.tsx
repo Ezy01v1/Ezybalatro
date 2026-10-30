@@ -5,7 +5,7 @@ import type { SeatModel } from '@/table/viewModel';
 import { colors, radii, sizes, spacing, table } from '@/theme/tokens';
 import { Text } from '@/ui/primitives';
 import { CardRow } from './Board';
-import { DealerButton, seatA11yLabel, StreetBet } from './SeatBadge';
+import { DealerButton, seatA11yLabel, StreetBet, TimerFill, WinAmount } from './SeatBadge';
 
 /** Your zone: 2 big cards, name, stack, street bet and your turn timer. */
 export function HeroSeat({
@@ -20,22 +20,22 @@ export function HeroSeat({
   const dim = hero.state === 'folded' ? 0.4 : hero.state === 'sittingOut' ? 0.6 : 1;
   return (
     <View style={styles.root} testID="hero-seat">
-      <StreetBet amount={hero.streetBet} />
+      <StreetBet amount={hero.streetBet} allIn={hero.state === 'allIn'} />
       <View style={[styles.cards, { borderColor: ring, opacity: dim }]}>
         {hero.cards ? (
-          <CardRow cards={hero.cards} width={sizes.heroCard.w} height={sizes.heroCard.h} />
+          <CardRow
+            cards={hero.cards}
+            width={sizes.heroCard.w}
+            height={sizes.heroCard.h}
+            enter="deal"
+          />
         ) : (
           <View style={{ height: sizes.heroCard.h }} />
         )}
         {hero.isButton ? <DealerButton /> : null}
         {myTurn && timer ? (
           <View style={styles.timerTrack}>
-            <View
-              style={[
-                styles.timerFill,
-                { width: `${Math.round(timer.fraction * 100)}%`, backgroundColor: ring },
-              ]}
-            />
+            <TimerFill fraction={timer.fraction} low={timer.low} color={ring} />
           </View>
         ) : null}
       </View>
@@ -55,9 +55,7 @@ export function HeroSeat({
             {es.table.allInTag}
           </Text>
         ) : null}
-        {hero.state === 'winner' && hero.won !== null ? (
-          <Text variant="caption" tone="money">{`+${formatNumber(hero.won)}`}</Text>
-        ) : null}
+        {hero.state === 'winner' && hero.won !== null ? <WinAmount amount={hero.won} /> : null}
       </View>
     </View>
   );
@@ -76,7 +74,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     overflow: 'hidden',
   },
-  timerFill: { height: 3 },
   info: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
   name: { maxWidth: 160 },
 });

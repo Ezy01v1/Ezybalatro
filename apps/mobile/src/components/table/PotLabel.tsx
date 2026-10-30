@@ -1,4 +1,6 @@
 import { StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { usePulseStyle } from './animations';
 import { formatNumber } from '@/game/format';
 import { es } from '@/i18n/es';
 import { spacing } from '@/theme/tokens';
@@ -12,6 +14,8 @@ export function PotLabel({
   pots: { main: number; sides: number[] };
   winner: { name: string; amount: number } | null;
 }) {
+  // Hooks before any early return: the pot pulses when the street's chips join it.
+  const pulse = usePulseStyle(pots.main);
   if (winner) {
     return (
       <Text variant="bodyMedium" tone="money" center testID="pot-label">
@@ -25,9 +29,11 @@ export function PotLabel({
     ...pots.sides.map((n) => es.table.sidePot(formatNumber(n))),
   ];
   return (
-    <Text variant="numeric" tone="money" center testID="pot-label" style={styles.text}>
-      {parts.join(' · ')}
-    </Text>
+    <Animated.View style={pulse}>
+      <Text variant="numeric" tone="money" center testID="pot-label" style={styles.text}>
+        {parts.join(' · ')}
+      </Text>
+    </Animated.View>
   );
 }
 

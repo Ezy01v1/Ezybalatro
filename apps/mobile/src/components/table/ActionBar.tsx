@@ -1,5 +1,6 @@
 import type { PlayerAction } from '@naipes/shared';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { formatNumber } from '@/game/format';
 import { es } from '@/i18n/es';
 import type { ActionBarModel } from '@/table/viewModel';
@@ -25,13 +26,17 @@ export function ActionBar({
   onAct,
   onOpenBet,
   onSitIn,
+  pending = false,
 }: {
   model: ActionBarModel;
   disabled: boolean;
+  /** An action is travelling to the server: a spinner shows if it takes > `PENDING_SPINNER_MS`. */
+  pending?: boolean;
   onAct: (action: PlayerAction) => void;
   onOpenBet: () => void;
   onSitIn: () => void;
 }) {
+  const slow = useSlowPending(pending);
   if (model.kind === 'waiting') {
     return (
       <View style={styles.root} testID="action-bar">
@@ -85,8 +90,29 @@ export function ActionBar({
       ) : (
         <View style={styles.button} />
       )}
+      {slow ? (
+        <View style={styles.spinner} pointerEvents="none">
+          <ActivityIndicator color={colors.primary} testID="action-pending" />
+        </View>
+      ) : null}
     </View>
   );
+}
+
+export const PENDING_SPINNER_MS = 600;
+
+/** True once `pending` has lasted longer than `PENDING_SPINNER_MS` (quick acks show nothing). */
+function useSlowPending(pending: boolean): boolean {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!pending) return;
+    const id = setTimeout(() => setSlow(true), PENDING_SPINNER_MS);
+    return () => {
+      clearTimeout(id);
+      setSlow(false);
+    };
+  }, [pending]);
+  return pending && slow;
 }
 
 const styles = StyleSheet.create({
@@ -99,6 +125,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: 'transparent',
+  },
+  spinner: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   myTurn: { borderTopColor: colors.primary },
   wide: { flex: 1, minHeight: sizes.actionButtonMinHeight, justifyContent: 'center' },

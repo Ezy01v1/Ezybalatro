@@ -45,6 +45,7 @@ const safe = (promise: () => Promise<void>) => {
 };
 
 export const haptics = {
+  light: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   select: () => safe(() => Haptics.selectionAsync()),
   limit: () => safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)),
   play: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)),

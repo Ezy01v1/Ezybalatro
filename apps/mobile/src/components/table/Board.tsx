@@ -1,5 +1,8 @@
 import type { Card } from '@naipes/engine';
+import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { useEnterStyle, type EnterKind } from './animations';
 import { PlayingCard } from '@/components/shared/PlayingCard';
 import { colors, layout, radii, sizes, spacing } from '@/theme/tokens';
 
@@ -22,11 +25,14 @@ export function CardRow({
   width,
   height,
   gap = spacing.xs,
+  enter = null,
 }: {
   cards: (Card | null)[];
   width: number;
   height: number;
   gap?: number;
+  /** How a face-up card appears when it mounts: dealt (staggered) or flipped. */
+  enter?: Extract<EnterKind, 'deal' | 'flip'> | null;
 }) {
   return (
     <View style={{ width: cards.length * width + (cards.length - 1) * gap, height }}>
@@ -36,9 +42,15 @@ export function CardRow({
           style={[styles.slot, { left: i * (width + gap), width, height }]}
         >
           {card ? (
-            <View style={styles.lift}>
-              <PlayingCard card={card} width={width} height={height} x={0} />
-            </View>
+            enter ? (
+              <EnterCard kind={enter} index={i}>
+                <PlayingCard card={card} width={width} height={height} x={0} />
+              </EnterCard>
+            ) : (
+              <View style={styles.lift}>
+                <PlayingCard card={card} width={width} height={height} x={0} />
+              </View>
+            )
           ) : (
             <CardBack width={width} height={height} />
           )}
@@ -48,11 +60,24 @@ export function CardRow({
   );
 }
 
+function EnterCard({
+  kind,
+  index,
+  children,
+}: {
+  kind: 'deal' | 'flip';
+  index: number;
+  children: ReactNode;
+}) {
+  const style = useEnterStyle(kind, index);
+  return <Animated.View style={[styles.lift, style]}>{children}</Animated.View>;
+}
+
 /** The 5 board slots in the center of the oval. */
 export function Board({ cards }: { cards: (Card | null)[] }) {
   return (
     <View testID="board">
-      <CardRow cards={cards} width={sizes.boardCard.w} height={sizes.boardCard.h} />
+      <CardRow cards={cards} width={sizes.boardCard.w} height={sizes.boardCard.h} enter="flip" />
     </View>
   );
 }

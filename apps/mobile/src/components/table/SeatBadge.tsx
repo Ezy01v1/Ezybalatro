@@ -1,4 +1,6 @@
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { useEnterStyle, useTimerStyle } from './animations';
 import { formatNumber } from '@/game/format';
 import { es } from '@/i18n/es';
 import type { SeatModel } from '@/table/viewModel';
@@ -83,14 +85,8 @@ export function SeatBadge({
             <Text variant="subtitle">{(seat.name ?? '?').slice(0, 1).toUpperCase()}</Text>
           </View>
           {seat.state === 'turn' && timer ? (
-            // Static bar for now; Task 9 turns it into a draining ring with a pulse.
             <View style={styles.timerTrack}>
-              <View
-                style={[
-                  styles.timerFill,
-                  { width: `${Math.round(timer.fraction * 100)}%`, backgroundColor: ringColor },
-                ]}
-              />
+              <TimerFill fraction={timer.fraction} low={timer.low} color={ringColor} />
             </View>
           ) : null}
           {seat.isButton ? <DealerButton /> : null}
@@ -116,12 +112,10 @@ export function SeatBadge({
             {es.table.sittingOutTag}
           </Text>
         ) : null}
-        {seat.state === 'winner' && seat.won !== null ? (
-          <Text variant="caption" tone="money">{`+${formatNumber(seat.won)}`}</Text>
-        ) : null}
+        {seat.state === 'winner' && seat.won !== null ? <WinAmount amount={seat.won} /> : null}
         {seat.cards ? <SmallCards cards={seat.cards} /> : null}
       </View>
-      <StreetBet amount={seat.streetBet} />
+      <StreetBet amount={seat.streetBet} allIn={seat.state === 'allIn'} />
     </View>
   );
 }
@@ -137,16 +131,50 @@ export function DealerButton() {
   );
 }
 
-/** Chip stack + number for the current street bet. */
-export function StreetBet({ amount }: { amount: number }) {
+/** Chip stack + number for the current street bet; the chips pop in (with a bounce on all-in). */
+export function StreetBet({ amount, allIn = false }: { amount: number; allIn?: boolean }) {
   if (amount <= 0) return null;
   return (
     <View style={styles.bet} testID="street-bet">
-      <View style={styles.chip} />
+      <BetChip allIn={allIn} />
       <Text variant="caption" tone="chips" style={styles.numeric}>
         {formatNumber(amount)}
       </Text>
     </View>
+  );
+}
+
+function BetChip({ allIn }: { allIn: boolean }) {
+  const style = useEnterStyle(allIn ? 'allIn' : 'chips');
+  return <Animated.View style={[styles.chip, style]} />;
+}
+
+/** "+320" flying in from the pot to the winner's seat (`potToWinnerMs`). */
+export function WinAmount({ amount }: { amount: number }) {
+  const style = useEnterStyle('win');
+  return (
+    <Animated.View style={style}>
+      <Text variant="caption" tone="money">{`+${formatNumber(amount)}`}</Text>
+    </Animated.View>
+  );
+}
+
+/** Turn timer fill: drains with scaleX from the left and beats in the last seconds. */
+export function TimerFill({
+  fraction,
+  low,
+  color,
+}: {
+  fraction: number;
+  low: boolean;
+  color: string;
+}) {
+  const style = useTimerStyle(fraction, low);
+  return (
+    <Animated.View
+      testID="turn-timer"
+      style={[styles.timerFill, { backgroundColor: color }, style]}
+    />
   );
 }
 
@@ -181,7 +209,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     overflow: 'hidden',
   },
-  timerFill: { height: 3 },
+  timerFill: { height: 3, width: '100%', transformOrigin: 'left' },
   dealer: {
     position: 'absolute',
     right: -6,

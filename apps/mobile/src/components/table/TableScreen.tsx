@@ -5,6 +5,7 @@ import type { StoreApi, UseBoundStore } from 'zustand';
 import { formatNumber } from '@/game/format';
 import { es } from '@/i18n/es';
 import type { TableState } from '@/table/tableStore';
+import { useTableEffects } from '@/table/useTableEffects';
 import { quickAmounts, toTableModel } from '@/table/viewModel';
 import { colors, spacing, touchTarget } from '@/theme/tokens';
 import { Screen, Text } from '@/ui/primitives';
@@ -46,7 +47,10 @@ export function TableScreen({
   const pending = useStore((s) => s.pendingAction);
   const toast = useStore((s) => s.toast);
   const leftWith = useStore((s) => s.leftWith);
+  const prev = useStore((s) => s.prev);
   const store = useStore.getState;
+
+  useTableEffects(update, prev);
 
   const [now, setNow] = useState(() => Date.now());
   const [betOpen, setBetOpen] = useState(false);
@@ -171,6 +175,7 @@ export function TableScreen({
             <ActionBar
               model={bar}
               disabled={blocked}
+              pending={pending}
               onAct={act}
               onOpenBet={() => setBetOpen(true)}
               onSitIn={() => void store().sitIn()}
