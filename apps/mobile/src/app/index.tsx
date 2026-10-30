@@ -46,11 +46,11 @@ export default function HomeScreen() {
   return (
     <Screen>
       <View style={styles.top}>
-        <BalanceBadge balance={balance} />
+        <BalanceBadge balance={balance} stale={!online && balance != null} />
         <Button
           testID="settings"
           variant="ghost"
-          label="⚙︎"
+          label={es.menu.settingsGlyph}
           accessibilityLabel={es.menu.settings}
           disabled
           style={styles.gear}

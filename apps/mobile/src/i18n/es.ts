@@ -7,11 +7,7 @@ import type { HandCategory, Rank, Suit } from '@naipes/engine';
 export const es = {
   appName: 'Naipes',
   home: {
-    subtitle: 'Elige cómo quieres jugar',
     roguelike: 'Roguelike',
-    roguelikeHint: 'Un jugador, sin conexión',
-    table: 'Mesa',
-    tableHint: "Texas Hold'em en línea (próximamente)",
     continueRun: 'Continuar run',
     continueHint: (ante: number) => `Vas en el nivel ${ante}`,
     newRun: 'Nueva run',
@@ -20,6 +16,7 @@ export const es = {
   },
   menu: {
     settings: 'Perfil (próximamente)',
+    settingsGlyph: '⚙︎',
     balanceA11y: (n: string) => `Tu saldo: ${n} fichas`,
     welcomeChips: 'Te damos 10.000 fichas al entrar',
     offline: 'Sin conexión',

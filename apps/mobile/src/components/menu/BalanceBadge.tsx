@@ -25,12 +25,13 @@ export function ChipIcon({ size = 16 }: { size?: number }) {
 }
 
 /** `balance` null means unknown/loading: shows an em dash. */
-export function BalanceBadge({ balance }: { balance: number | null }) {
+/** `stale` renders the value muted (last known balance, no network). */
+export function BalanceBadge({ balance, stale }: { balance: number | null; stale?: boolean }) {
   const text = balance == null ? '—' : formatNumber(balance);
   return (
     <View style={styles.badge} accessible accessibilityLabel={es.menu.balanceA11y(text)}>
       <ChipIcon />
-      <Text variant="button" testID="balance-value">
+      <Text variant="button" tone={stale ? 'muted' : 'fg'} testID="balance-value">
         {text}
       </Text>
     </View>

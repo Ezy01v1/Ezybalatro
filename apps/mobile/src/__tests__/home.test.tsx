@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import HomeScreen from '@/app/index';
 import { useGame } from '@/game/store';
+import { colors } from '@/theme/tokens';
+
+const flat = (style: unknown) => Object.assign({}, ...[style].flat(Infinity).filter(Boolean));
 
 const mockPush = jest.fn();
 let mockFocusCallbacks: (() => void)[] = [];
@@ -66,6 +69,7 @@ describe('HomeScreen', () => {
   it('shows the balance from the server', async () => {
     await render(<HomeScreen />);
     expect(screen.getByTestId('balance-value').props.children).toBe('10.000');
+    expect(flat(screen.getByTestId('balance-value').props.style).color).not.toBe(colors.muted);
   });
 
   it('shows a dash while the balance loads', async () => {
@@ -81,6 +85,7 @@ describe('HomeScreen', () => {
     mockKnown = 8500;
     await render(<HomeScreen />);
     expect(screen.getByTestId('balance-value').props.children).toBe('8.500');
+    expect(flat(screen.getByTestId('balance-value').props.style).color).toBe(colors.muted);
     expect(screen.getByText('Sin conexión')).toBeTruthy();
     expect(screen.getByTestId('quick-table').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(screen.getByTestId('quick-table'));
