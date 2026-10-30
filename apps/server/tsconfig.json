@@ -11,7 +11,7 @@
     "strictPropertyInitialization": false,
     "removeComments": true,
     "outDir": "./dist",
-    "rootDir": ".",
+    "rootDir": "..",
     "incremental": true
   },
   "include": ["src", "test"]
