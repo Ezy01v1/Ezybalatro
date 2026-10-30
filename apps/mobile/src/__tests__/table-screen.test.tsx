@@ -115,6 +115,25 @@ describe('TableScreen', () => {
     expect(client.act).toHaveBeenCalledWith(1, { type: 'bet', amount: 20 });
   });
 
+  it('keeps the chosen amount across updates of the same turn; a new range resets it', async () => {
+    const { emit } = await setup();
+    await act(async () => emit({ type: 'update', update: update({ myTurn: true }) }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Apostar' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Subir monto' }));
+    expect(screen.getByText('Apostar 40')).toBeTruthy();
+    await act(async () => emit({ type: 'update', update: update({ myTurn: true, seq: 2 }) }));
+    expect(screen.getByText('Apostar 40')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Subir monto' }));
+    expect(screen.getByText('Apostar 60')).toBeTruthy();
+    const base = update({ myTurn: true, seq: 3 });
+    const changed = {
+      ...base,
+      view: { ...base.view, legal: { ...base.view.legal!, bet: { min: 40, max: 900 } } },
+    } as TableUpdate;
+    await act(async () => emit({ type: 'update', update: changed }));
+    expect(screen.getByText('Apostar 40')).toBeTruthy();
+  });
+
   it('leaving mid-hand asks first, then shows the summary', async () => {
     const { client, emit, onExit } = await setup();
     await act(async () => emit({ type: 'update', update: update() }));

@@ -154,7 +154,7 @@ export function TableScreen({
           ) : null}
           {showBet && range && legal ? (
             <BetSelector
-              key={`${update?.seq}-${range.type}`}
+              key={`${update?.view.hand?.handNumber}-${update?.view.hand?.street}-${range.type}-${range.min}-${range.max}`}
               range={range}
               quick={quickAmounts(
                 legal,
