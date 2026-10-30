@@ -9,7 +9,24 @@ jest.mock('expo-secure-store', () => ({
 
 beforeEach(() => mockMem.clear());
 
+const SecureStore = jest.requireMock('expo-secure-store');
+
 describe('chunkedSecureStorage', () => {
+  it('getItem returns null and clears the chunks when the keystore throws', async () => {
+    await storage.setItem('k', 'v'.repeat(3000));
+    SecureStore.getItemAsync.mockRejectedValueOnce(new Error('keystore invalidated'));
+    await expect(storage.getItem('k')).resolves.toBeNull();
+    expect(mockMem.size).toBe(0);
+  });
+
+  it('setItem and removeItem never throw', async () => {
+    SecureStore.setItemAsync.mockRejectedValueOnce(new Error('boom'));
+    await expect(storage.setItem('k', 'v')).resolves.toBeUndefined();
+    SecureStore.getItemAsync.mockRejectedValueOnce(new Error('boom'));
+    SecureStore.deleteItemAsync.mockRejectedValueOnce(new Error('boom'));
+    await expect(storage.removeItem('k')).resolves.toBeUndefined();
+  });
+
   it.each([0, 2048, 5 * 1024])('round-trips values of %i B', async (size) => {
     const value = 'x'.repeat(size);
     await storage.setItem('k', value);
