@@ -97,7 +97,7 @@ describe('tableClient', () => {
     await client.quickSeat();
     socket().syncAck = { ok: true, update: { ...validUpdate, seq: 9 } };
     client.sync();
-    await new Promise((r) => setImmediate(r));
+    await new Promise<void>((r) => setImmediate(r));
     const updates = events.flatMap((e) => (e.type === 'update' ? [e.update.seq] : []));
     expect(updates).toEqual([9]);
   });
@@ -109,7 +109,7 @@ describe('tableClient', () => {
     await client.quickSeat();
     socket().syncAck = { ok: true, update: { tableId: 't1' } };
     client.sync();
-    await new Promise((r) => setImmediate(r));
+    await new Promise<void>((r) => setImmediate(r));
     expect(events.some((e) => e.type === 'update')).toBe(false);
   });
 
