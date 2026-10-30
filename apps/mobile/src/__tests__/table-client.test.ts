@@ -8,6 +8,7 @@ class FakeSocket {
   emitted: { event: string; payload: unknown }[] = [];
   connect = jest.fn();
   disconnect = jest.fn();
+  syncAck: unknown = { ok: false, error: { type: 'error', code: 'NOT_AT_TABLE', message: 'x' } };
   constructor(
     public url: string,
     public opts: { auth: (cb: (d: object) => void) => void },
@@ -26,7 +27,8 @@ class FakeSocket {
     return {
       emit: (event: string, payload: unknown, cb: Handler) => {
         this.emitted.push({ event, payload });
-        cb(null, { ok: true, tableId: 't1', seat: 2 });
+        if (event === 'table:sync') cb(null, this.syncAck);
+        else cb(null, { ok: true, tableId: 't1', seat: 2 });
       },
     };
   }
@@ -86,6 +88,29 @@ describe('tableClient', () => {
     socket().fire('connect');
     expect(statuses(events).at(-1)).toBe('connected');
     expect(socket().emitted).toEqual([{ event: 'table:sync', payload: { tableId: 't1' } }]);
+  });
+
+  it('sync delivers the update returned in the ack (the server does not emit table:update)', async () => {
+    const { client, events, socket } = setup();
+    socket().connected = true;
+    socket().fire('connect');
+    await client.quickSeat();
+    socket().syncAck = { ok: true, update: { ...validUpdate, seq: 9 } };
+    client.sync();
+    await new Promise((r) => setImmediate(r));
+    const updates = events.flatMap((e) => (e.type === 'update' ? [e.update.seq] : []));
+    expect(updates).toEqual([9]);
+  });
+
+  it('sync ignores a malformed update in the ack', async () => {
+    const { client, events, socket } = setup();
+    socket().connected = true;
+    socket().fire('connect');
+    await client.quickSeat();
+    socket().syncAck = { ok: true, update: { tableId: 't1' } };
+    client.sync();
+    await new Promise((r) => setImmediate(r));
+    expect(events.some((e) => e.type === 'update')).toBe(false);
   });
 
   it('io server disconnect reconnects manually (disconnectAction manual)', () => {

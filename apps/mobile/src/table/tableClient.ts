@@ -92,7 +92,11 @@ export function createTableClient(deps: TableClientDeps): TableClient {
   }
 
   function sync(): void {
-    if (socket?.connected && tableId !== null) socket.emit(SOCKET_EVENTS.sync, { tableId });
+    if (!socket?.connected || tableId === null) return;
+    // The server answers sync only through the ack; it does not emit table:update.
+    void requestForTable<{ update: unknown }>(SOCKET_EVENTS.sync).then((ack) => {
+      if (ack.ok && isTableUpdate(ack.update)) emit({ type: 'update', update: ack.update });
+    });
   }
 
   function wire(s: NonNullable<typeof socket>): void {
