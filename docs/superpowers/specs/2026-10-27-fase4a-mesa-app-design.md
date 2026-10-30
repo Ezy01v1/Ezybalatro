@@ -102,3 +102,18 @@ Reanimated sobre transform/opacity con los tiempos `motion` del diseño 4b §3; 
 - **Integración**: `tableClient` contra el servidor real en proceso (embebido) desde los tests del server, reutilizando el cliente de consola: conectar, quickSeat, recibir update, reconectar + sync. (Si el entorno de jest-expo lo complica, este test vive en `apps/server/test` usando el `tableClient` compilado.)
 - **Manual**: criterio de éxito arriba, en el Galaxy A56; medir frames en la mesa como en la Fase 2.
 - El cliente de consola (`pnpm play`) debe seguir funcionando tras mover la política de reconexión.
+
+## Prueba manual pendiente
+
+Estado: la implementación está terminada en `feat/phase-4a-table`; falta la prueba del usuario en el Galaxy A56 (Expo Go, datos móviles, `https://naipes-server.onrender.com`).
+
+- [ ] 1. Abrir la app: menú con saldo; "Mesa rápida" te sienta y se juegan varias manos contra bots (cartas, acciones, selector de monto).
+- [ ] 2. A mitad de mano, cortar los datos móviles y volver a activarlos: aparece "Reconectando…" y la mesa se recupera en la misma mano/mesa.
+- [ ] 3. Con el servidor dormido (esperar más de 15 min sin tráfico): entrar a la mesa muestra "El servidor está despertando…" y luego la mesa.
+- [ ] 4. Salir de la mesa: "Te levantaste con N fichas" y el saldo del menú coincide con el stack final.
+- [ ] 5. El roguelike funciona igual (nueva run, jugar, tienda), también en modo avión.
+- [ ] Extra: mandar la app a segundo plano más de 10 s y volver: se reconecta y vuelve a la mesa.
+- [ ] Medir frames en la mesa como en la Fase 2 (p50 / p95 / p99 y % de frames tarde) y anotar el resultado aquí.
+
+Para probar contra un servidor local: `$env:EXPO_PUBLIC_SERVER_URL='http://localhost:3111'` y `adb reverse tcp:3111 tcp:3111`.
+

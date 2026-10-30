@@ -215,3 +215,13 @@ Otras variables de la mesa: `TABLE_SMALL_BLIND` (10), `TABLE_BIG_BLIND` (20), `T
 ## 9. Cliente de consola
 
 `pnpm play -- --guest [--url http://localhost:3000] [--buy-in 1000]` abre un cliente de texto (`apps/server/src/dev-client/`; usa el `dist` ya compilado, no recompila). Con `--guest` crea un usuario anónimo de Supabase (`signInAnonymously`, con `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` de `apps/server/.env`) y se conecta con su access token, que nunca imprime. `--name ana` usa la identidad de desarrollo (requiere `DEV_IDENTITY=true` en el servidor). Los nombres se muestran desde `names` (si falta, un id corto). Comandos: `f` fold · `k` check · `c` call · `b <n>` bet · `r <n>` raise a · `a` all-in · `sitout` · `sitin` · `leave` · `q` (cierra el socket sin `leave`; si vuelves antes de la gracia, sigues en la misma mesa). Si la primera conexión falla o el token es rechazado (`UNAUTHORIZED`) sale con código 1; si el servidor se cae después, muestra "Reconectando..." y vuelve a sentarse.
+
+## 10. Cliente móvil
+
+La app (`apps/mobile/src/table/`) usa la misma política de reconexión que el cliente de consola (módulo compartido): reintentos con espera creciente y, al reconectar, `quickSeat` para volver a la misma mesa si la gracia (`DISCONNECT_GRACE_MS`) no venció.
+
+- **Segundo plano:** al pasar la app a background se mantiene el socket 10 s; pasado ese tiempo se desconecta. Al volver a primer plano se reconecta y se envía `quickSeat` para re-adjuntarse a la mesa.
+- **Mensajes malformados:** un mensaje del servidor que no valida contra los schemas de `@naipes/shared` se descarta (sin romper la pantalla) y el cliente pide `table:sync` para recuperar el estado.
+- **Servidor dormido (Render gratis):** si la conexión inicial tarda más de 5 s se muestra "El servidor está despertando…"; si pasan 90 s sin conectar, el estado pasa a fallido con opción de reintentar.
+- **URL del servidor:** `EXPO_PUBLIC_SERVER_URL` (por defecto el servidor de Render).
+
