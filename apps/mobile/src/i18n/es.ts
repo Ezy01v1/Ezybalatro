@@ -18,6 +18,17 @@ export const es = {
     seededRun: 'Jugar con semilla',
     corruptSave: 'No pudimos recuperar tu run anterior. Puedes empezar una nueva.',
   },
+  menu: {
+    settings: 'Perfil (próximamente)',
+    balanceA11y: (n: string) => `Tu saldo: ${n} fichas`,
+    welcomeChips: 'Te damos 10.000 fichas al entrar',
+    offline: 'Sin conexión',
+    roguelikeHint: 'Un jugador · sin conexión',
+    runInProgress: (n: number) => `Run en curso · Nivel ${n}`,
+    quickTable: 'Mesa rápida',
+    tableTitle: 'Mesa',
+    tableHint: "Hold'em en vivo · fichas virtuales",
+  },
   table: {
     resyncing: 'Acción no válida, actualizando la mesa…',
     genericError: 'Algo salió mal. Inténtalo de nuevo.',
