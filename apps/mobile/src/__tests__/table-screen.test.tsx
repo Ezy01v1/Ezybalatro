@@ -5,6 +5,9 @@ import { TableScreen } from '@/components/table/TableScreen';
 import type { ClientEvent, TableClient } from '@/table/tableClient';
 import { createTableStore } from '@/table/tableStore';
 
+let mockNet: { isConnected: boolean | null } = { isConnected: true };
+jest.mock('@react-native-community/netinfo', () => ({ useNetInfo: () => mockNet }));
+
 function makeClient() {
   let listener: (e: ClientEvent) => void = () => {};
   const ok = (): Promise<Ack> => Promise.resolve({ ok: true });
@@ -90,7 +93,10 @@ async function setup() {
   return { ...h, store, onExit };
 }
 
-beforeEach(() => jest.useFakeTimers());
+beforeEach(() => {
+  jest.useFakeTimers();
+  mockNet = { isConnected: true };
+});
 afterEach(() => jest.useRealTimers());
 
 describe('TableScreen', () => {
@@ -146,6 +152,16 @@ describe('TableScreen', () => {
     expect(screen.getByText('Te levantaste con 1.480 fichas')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Volver al menú' }));
     expect(onExit).toHaveBeenCalled();
+  });
+
+  it('losing the network shows "Reconectando…" right away and blocks actions', async () => {
+    const { emit } = await setup();
+    await act(async () => emit({ type: 'update', update: update({ myTurn: true }) }));
+    expect(screen.queryByText('Reconectando…')).toBeNull();
+    mockNet = { isConnected: false };
+    await act(async () => emit({ type: 'update', update: update({ myTurn: true, seq: 2 }) }));
+    expect(screen.getByText('Reconectando…')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Apostar' })).toBeDisabled();
   });
 
   it('server close and session replaced dialogs', async () => {

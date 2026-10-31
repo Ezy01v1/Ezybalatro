@@ -1,4 +1,5 @@
 import type { PlayerAction, TableUpdate } from '@naipes/shared';
+import { useNetInfo } from '@react-native-community/netinfo';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppState, BackHandler, Pressable, StyleSheet, View } from 'react-native';
 import type { StoreApi, UseBoundStore } from 'zustand';
@@ -41,7 +42,10 @@ export function TableScreen({
   balance: number | null;
   onExit: () => void;
 }) {
-  const status = useStore((s) => s.status);
+  const storeStatus = useStore((s) => s.status);
+  // The socket only notices a dead network after its ping timeout; the OS knows at once.
+  const offline = useNetInfo().isConnected === false;
+  const status = offline && storeStatus === 'seated' ? 'reconnecting' : storeStatus;
   const update = useStore((s) => s.update);
   const receivedAt = useStore((s) => s.turnReceivedAt);
   const pending = useStore((s) => s.pendingAction);
