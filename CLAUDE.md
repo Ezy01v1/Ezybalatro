@@ -57,6 +57,7 @@ Todos se corren desde la raíz. Requisitos: Node 24 (`.nvmrc`) y pnpm 10 (`packa
 - Typecheck: `pnpm typecheck` (compila antes `packages/*`)
 - Tests: `pnpm test` (todo) · `pnpm test:engine` (cobertura: `pnpm --filter @naipes/engine test:coverage`) · `pnpm test:server` (unit + e2e) · `pnpm test:mobile` · e2e móvil con Maestro: `maestro test apps/mobile/.maestro/` (requiere el CLI de Maestro y el teléfono por USB con Expo Go)
 - Build: `pnpm build` (packages + server) · bundle móvil: `pnpm export:mobile`
+- APK instalable sin cable (EAS Build, nube de Expo, plan gratis): desde `apps/mobile`, `eas build -p android --profile preview` (requiere `npm i -g eas-cli` y `eas login`; apunta al servidor de Render; paquete `com.ezy01v1.naipes`).
 - Deploy del servidor (Render, `render.yaml`): push a `main` → Render despliega cuando el CI de GitHub pasa (build: instalar, compilar y `prisma migrate deploy`). Secretos (`DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SECRET_KEY`) solo en el panel de Render; logs en el panel. Plan gratis: se duerme tras 15 min sin tráfico y despierta en ~1 min con la primera conexión. Al apagar drena las mesas hasta `SHUTDOWN_DRAIN_MS` (20 s en Render: el plan gratis da 30 s antes de `SIGKILL`).
 - Compilar solo los paquetes compartidos: `pnpm build:packages`
 - Migraciones (Prisma): crear/aplicar en desarrollo `pnpm db:migrate:dev` · aplicar en Supabase/producción `pnpm db:migrate:deploy` (usa `DIRECT_URL`, session pooler 5432). Tests de integración con Postgres embebido: `pnpm --filter @naipes/server test:int`.
