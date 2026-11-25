@@ -100,6 +100,13 @@ describe('HomeScreen', () => {
     expect(screen.getByTestId('balance-value').props.children).toBe('—');
   });
 
+  it('opens the profile from the gear', async () => {
+    await render(<HomeScreen />);
+    expect(screen.getByTestId('settings').props.accessibilityState.disabled).toBe(false);
+    await fireEvent.press(screen.getByTestId('settings'));
+    expect(mockPush).toHaveBeenCalledWith('/profile');
+  });
+
   it('opens the table and refreshes the balance when coming back', async () => {
     await render(<HomeScreen />);
     expect(mockInvalidate).not.toHaveBeenCalled();

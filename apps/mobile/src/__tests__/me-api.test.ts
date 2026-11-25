@@ -1,4 +1,4 @@
-import { fetchMe, lastKnownBalance } from '../api/me';
+import { clearMeCache, deleteMe, fetchMe, lastKnownBalance, patchMe } from '../api/me';
 
 const mockRefresh = jest.fn();
 const mockGetSession = jest.fn();
@@ -47,5 +47,60 @@ describe('fetchMe', () => {
   it('throws on an invalid body', async () => {
     mockFetch.mockResolvedValue(json(200, { ...me, balance: 1.5 }));
     await expect(fetchMe()).rejects.toThrow();
+  });
+});
+
+describe('patchMe', () => {
+  it('sends the patch as JSON and returns the updated profile', async () => {
+    mockFetch.mockResolvedValue(json(200, { ...me, nickname: 'beto' }));
+    expect((await patchMe({ nickname: 'beto' })).nickname).toBe('beto');
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init.method).toBe('PATCH');
+    expect(init.headers['Content-Type']).toBe('application/json');
+    expect(init.headers.Authorization).toBe('Bearer tok');
+    expect(JSON.parse(init.body)).toEqual({ nickname: 'beto' });
+  });
+
+  it('rejects with the server error code', async () => {
+    mockFetch.mockResolvedValue(json(409, { error: { code: 'NICKNAME_TAKEN' } }));
+    await expect(patchMe({ nickname: 'beto' })).rejects.toThrow('NICKNAME_TAKEN');
+  });
+});
+
+describe('deleteMe', () => {
+  it('sends DELETE with the token and no body', async () => {
+    mockFetch.mockResolvedValue(json(204, null));
+    await deleteMe();
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toMatch(/\/v1\/me$/);
+    expect(init.method).toBe('DELETE');
+    expect(init.body).toBeUndefined();
+    expect(init.headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('rejects with ACCOUNT_BUSY', async () => {
+    mockFetch.mockResolvedValue(json(409, { error: { code: 'ACCOUNT_BUSY' } }));
+    await expect(deleteMe()).rejects.toThrow('ACCOUNT_BUSY');
+  });
+
+  it('falls back to the HTTP status when the body is not JSON', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error('not json');
+      },
+    } as unknown as Response);
+    await expect(deleteMe()).rejects.toThrow('HTTP_502');
+  });
+});
+
+describe('clearMeCache', () => {
+  it('forgets the last known balance', async () => {
+    mockFetch.mockResolvedValue(json(200, me));
+    await fetchMe();
+    expect(await lastKnownBalance()).toBe(1234);
+    clearMeCache();
+    expect(await lastKnownBalance()).toBeNull();
   });
 });

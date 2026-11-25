@@ -52,7 +52,7 @@ export default function HomeScreen() {
           variant="ghost"
           label={es.menu.settingsGlyph}
           accessibilityLabel={es.menu.settings}
-          disabled
+          onPress={() => router.push('/profile')}
           style={styles.gear}
         />
       </View>
