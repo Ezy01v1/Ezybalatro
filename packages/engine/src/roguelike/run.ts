@@ -670,15 +670,21 @@ function applyConsumable(
       new Set(cardIds).size !== cardIds.length ||
       !cardIds.every((id) => d.hand.some((c) => c.id === id))
     )
-      return err('INVALID_CARDS', `Select ${min} to ${max} different cards from your hand`);
+      return err(
+        'INVALID_CARDS',
+        min === max
+          ? `Select exactly ${min} ${min === 1 ? 'card' : 'different cards'} from your hand`
+          : `Select ${min} to ${max} different cards from your hand`,
+      );
   }
 
+  // The event goes first so that events of the operations (cards drawn) follow it.
+  d.consumables.splice(index, 1);
+  events.push({ type: 'consumableUsed', instanceId, consumableId: def.id, cardIds: [...cardIds] });
   for (const op of def.ops) {
-    const error = applyOp(d, op, cardIds, content);
+    const error = applyOp(d, op, cardIds, content, events);
     if (error) return error;
   }
-  d.consumables.splice(index, 1);
-  events.push({ type: 'consumableUsed', instanceId, consumableId: def.id, cardIds });
   return null;
 }
 
@@ -688,6 +694,7 @@ function applyOp(
   op: ConsumableOp,
   targetIds: readonly string[],
   content: RunContent,
+  events: RunEvent[],
 ): RunError | null {
   switch (op.op) {
     case 'levelUpHand':
@@ -705,8 +712,9 @@ function applyOp(
         return (RANKS as readonly number[]).includes(rank) ? { ...card, rank: rank as Rank } : null;
       });
     case 'destroyCards':
+      return destroyCards(d, targetIds, events);
     case 'duplicateCard':
-      return err('INVALID_CONSUMABLE', 'Not available yet');
+      return duplicateCards(d, targetIds);
     default:
       return unreachable(op);
   }
@@ -732,6 +740,32 @@ function replaceCards(
   const swap = (card: RunCard) => changed.get(card.id) ?? card;
   d.hand = d.hand.map(swap);
   d.deck = d.deck.map(swap);
+  return null;
+}
+
+/** Removes the targets from the hand and the deck for good, then refills the hand. */
+function destroyCards(d: Draft, ids: readonly string[], events: RunEvent[]): RunError | null {
+  if (d.deck.length - ids.length < d.config.minDeckSize)
+    return err('INVALID_CARDS', `The deck cannot go below ${d.config.minDeckSize} cards`);
+  const gone = new Set(ids);
+  d.hand = d.hand.filter((c) => !gone.has(c.id));
+  d.deck = d.deck.filter((c) => !gone.has(c.id));
+  draw(d, events);
+  return null;
+}
+
+/**
+ * Adds a copy of each target (same rank, suit and enhancement, new id `x<n>`) to the end of the
+ * deck and of the hand. The hand may end up one card over `handSize` until cards leave it.
+ */
+function duplicateCards(d: Draft, ids: readonly string[]): RunError | null {
+  for (const id of ids) {
+    const card = d.hand.find((c) => c.id === id);
+    if (!card) return err('INVALID_CARDS', 'A selected card is not in your hand');
+    const copy: RunCard = { ...card, id: `x${d.nextCardNumber++}` };
+    d.deck = [...d.deck, copy];
+    d.hand.push(copy);
+  }
   return null;
 }
 

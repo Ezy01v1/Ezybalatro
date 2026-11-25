@@ -674,19 +674,158 @@ describe('applying and selling consumables', () => {
     );
   });
 
-  it('destroyCards and duplicateCard are not available yet', () => {
-    for (const op of [{ op: 'destroyCards' }, { op: 'duplicateCard' }] as const) {
-      const def: ConsumableDefinition = {
-        id: 'x',
-        cost: 3,
-        targets: { min: 1, max: 1 },
-        ops: [op],
-      };
-      const base = inventory(inBlind(), 'x');
-      expect(errorCode(base, use('c1', base.hand[0]!.id), withContent(def))).toBe(
-        'INVALID_CONSUMABLE',
+  it('a failing operation after a successful one leaves the state intact', () => {
+    const broken: ConsumableDefinition = {
+      id: 'broken_combo',
+      cost: 3,
+      targets: { min: 1, max: 1 },
+      ops: [
+        { op: 'levelUpHand', hand: 'pair' },
+        { op: 'shiftRank', delta: 1 },
+      ],
+    };
+    const base = inventory(inBlind(), 'broken_combo');
+    const id = base.hand[0]!.id;
+    const state = deepFreeze(patchCard(base, id, { rank: 14 }));
+    const before = JSON.stringify(state);
+    const result = runReducer(state, use('c1', id), withContent(broken));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('INVALID_CARDS');
+    expect(JSON.stringify(state)).toBe(before);
+    expect(state.handLevels.pair).toBe(1);
+    expect(state.consumables).toHaveLength(1);
+  });
+
+  it('asks for an exact number of cards in plain words', () => {
+    const base = inventory(inBlind(), 'twin');
+    const [a, b] = base.hand.map((c) => c.id) as [string, string];
+    const result = runReducer(base, use('c1', a, b));
+    if (result.ok) throw new Error('Expected the action to be rejected');
+    expect(result.error.message).toBe('Select exactly 1 card from your hand');
+  });
+
+  it('copies the target ids into the consumableUsed event', () => {
+    const base = inventory(inBlind(), 'paint_s');
+    const ids = [base.hand[0]!.id];
+    const { events } = act(base, use('c1', ...ids));
+    const used = events.find((e) => e.type === 'consumableUsed');
+    if (used?.type !== 'consumableUsed') throw new Error('No consumableUsed event');
+    expect(used.cardIds).toEqual(ids);
+    expect(used.cardIds).not.toBe(ids);
+  });
+
+  describe('destroying and duplicating cards', () => {
+    const inEasyBlind = (...consumableIds: string[]) =>
+      inventory(createRun('consume', EASY).state, ...consumableIds);
+    const everywhere = (state: RunState) => [...state.deck, ...state.hand, ...state.drawPile];
+    const piles = (state: RunState) => [...state.hand, ...state.drawPile];
+
+    it('scrap on 2 cards shrinks the deck, refills the hand and the cards are gone for good', () => {
+      const base = inventory(inBlind(), 'scrap');
+      const ids = [base.hand[0]!.id, base.hand[1]!.id];
+      const drawnIds = base.drawPile.slice(0, 2).map((c) => c.id);
+      const { state, events } = act(base, use('c1', ...ids));
+      expect(state.deck).toHaveLength(50);
+      expect(state.hand).toHaveLength(state.handSize);
+      expect(state.drawPile).toHaveLength(base.drawPile.length - 2);
+      for (const id of ids) expect(everywhere(state).some((c) => c.id === id)).toBe(false);
+      expect(state.hand.slice(-2).map((c) => c.id)).toEqual(drawnIds);
+      expect(events).toEqual([
+        { type: 'consumableUsed', instanceId: 'c1', consumableId: 'scrap', cardIds: ids },
+        { type: 'cardsDrawn', cardIds: drawnIds },
+      ]);
+      expect(hasUniqueIds(piles(state))).toBe(true);
+    });
+
+    it('destroyed cards do not come back in the next blind', () => {
+      const base = inEasyBlind('scrap');
+      const id = base.hand[0]!.id;
+      const afterScrap = act(base, use('c1', id)).state;
+      const shop = playFirst(afterScrap).state;
+      const next = act(shop, { type: 'leaveShop' }).state;
+      expect(next.hand.length + next.drawPile.length).toBe(51);
+      expect(everywhere(next).some((c) => c.id === id)).toBe(false);
+    });
+
+    it('fails with INVALID_CARDS when the deck would drop below minDeckSize, changing nothing', () => {
+      const base = inventory(createRun('consume').state, 'scrap');
+      const tight = deepFreeze({ ...base, config: { ...base.config, minDeckSize: 51 } });
+      const before = JSON.stringify(tight);
+      expect(errorCode(tight, use('c1', tight.hand[0]!.id, tight.hand[1]!.id))).toBe(
+        'INVALID_CARDS',
       );
-    }
+      expect(JSON.stringify(tight)).toBe(before);
+      // One card still fits (52 - 1 = 51).
+      expect(act(tight, use('c1', tight.hand[0]!.id)).state.deck).toHaveLength(51);
+    });
+
+    it('destroying the whole hand deals a completely new one', () => {
+      const wipe: ConsumableDefinition = {
+        id: 'wipe',
+        cost: 3,
+        targets: { min: 1, max: 8 },
+        ops: [{ op: 'destroyCards' }],
+      };
+      const base = inventory(inBlind(), 'wipe');
+      const ids = base.hand.map((c) => c.id);
+      const drawnIds = base.drawPile.slice(0, 8).map((c) => c.id);
+      const { state, events } = act(base, use('c1', ...ids), withContent(wipe));
+      expect(state.hand.map((c) => c.id)).toEqual(drawnIds);
+      expect(state.deck).toHaveLength(44);
+      expect(state.drawPile).toHaveLength(base.drawPile.length - 8);
+      expect(events[1]).toEqual({ type: 'cardsDrawn', cardIds: drawnIds });
+    });
+
+    it('twin adds an exact copy with a new id to the deck and to the hand', () => {
+      const base = inventory(inBlind(), 'twin');
+      const id = base.hand[2]!.id;
+      const patched = patchCard(base, id, { enhancement: 'reinforced' });
+      const original = patched.hand[2]!;
+      const { state, events } = act(patched, use('c1', id));
+      expect(state.deck).toHaveLength(53);
+      expect(state.hand).toHaveLength(9);
+      expect(state.nextCardNumber).toBe(2);
+      const copy = state.hand.at(-1)!;
+      expect(copy).toEqual({ ...original, id: 'x1' });
+      expect(copy.enhancement).toBe('reinforced');
+      expect(state.deck.at(-1)).toEqual(copy);
+      expect(state.hand.find((c) => c.id === id)).toEqual(original);
+      expect(state.drawPile).toEqual(patched.drawPile);
+      expect(events).toEqual([
+        { type: 'consumableUsed', instanceId: 'c1', consumableId: 'twin', cardIds: [id] },
+      ]);
+    });
+
+    it('a second twin creates x2 and the ids stay unique', () => {
+      const base = inventory(inBlind(), 'twin', 'twin');
+      const first = act(base, use('c1', base.hand[0]!.id)).state;
+      const second = act(first, use('c2', first.hand[0]!.id)).state;
+      expect(second.hand.slice(-2).map((c) => c.id)).toEqual(['x1', 'x2']);
+      expect(second.nextCardNumber).toBe(3);
+      expect(second.deck).toHaveLength(54);
+      expect(hasUniqueIds(second.deck)).toBe(true);
+      expect(hasUniqueIds(piles(second))).toBe(true);
+    });
+
+    it('a copy can be played, and the next blind shuffles all 53 cards', () => {
+      const base = inEasyBlind('twin');
+      const afterTwin = act(base, use('c1', base.hand[0]!.id)).state;
+      const { state: shop, events } = act(afterTwin, { type: 'play', cardIds: ['x1'] });
+      expect(events.find((e) => e.type === 'handScored')).toMatchObject({ playedIds: ['x1'] });
+      expect(shop.phase).toBe('shop');
+      const next = act(shop, { type: 'leaveShop' }).state;
+      expect(next.hand.length + next.drawPile.length).toBe(53);
+      expect(next.hand).toHaveLength(next.handSize);
+      expect(hasUniqueIds(piles(next))).toBe(true);
+      expect(piles(next).some((c) => c.id === 'x1')).toBe(true);
+    });
+
+    it('does not refill the hand beyond handSize after a copy', () => {
+      const base = inventory(inBlind(), 'twin');
+      const afterTwin = act(base, use('c1', base.hand[0]!.id)).state;
+      const { state } = act(afterTwin, { type: 'discard', cardIds: [afterTwin.hand[1]!.id] });
+      expect(state.hand).toHaveLength(8);
+    });
   });
 
   describe('selling', () => {
