@@ -66,7 +66,7 @@ Entradas que la spec no nombra y que más probablemente rompan algo; cada una ti
 - Modify: `packages/engine/src/index.ts` (exportar `CONSUMABLES`)
 
 **Interfaces:**
-- Produces: `CONSUMABLES: readonly ConsumableDefinition[]` con 21 entradas:
+- Produces: `CONSUMABLES: readonly ConsumableDefinition[]` con 22 entradas:
   - 9 estudios generados con `HAND_CATEGORIES.map`: id `study_<categoría>` (p. ej. `study_pair`), `cost: 3`, `targets: null`, `ops: [{ op: 'levelUpHand', hand }]`.
   - Mejoras (`targets: { min: 1, max: 2 }`, `ops: [{ op: 'enhanceCards', enhancement }]`): `reinforce` → `reinforced` ($3), `charge` → `charged` ($4), `gild` → `gilded` ($3), `weigh` → `heavy` ($3), `anchor_card` → `anchor` ($4), `volatilize` → `volatile` ($5).
   - Palos (`targets: { min: 1, max: 3 }`, `ops: [{ op: 'changeSuit', suit }]`, $3): `paint_s`, `paint_h`, `paint_d`, `paint_c`.
