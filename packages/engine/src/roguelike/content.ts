@@ -7,7 +7,7 @@ import type {
   JokerDefinition,
   RunContent,
 } from './types';
-import type { HandCategory } from '../hands/hand-category';
+import { HAND_CATEGORIES, type HandCategory } from '../hands/hand-category';
 
 /**
  * Roguelike content as data. Values are original and meant to be tuned with the balance simulation.
@@ -206,8 +206,77 @@ export const ENHANCEMENTS: readonly EnhancementDefinition[] = [
   { id: 'volatile', onScored: () => ({ xMult: 1.3 }) },
 ];
 
-/** Consumables (filled in with the content of phase 5a). */
-export const CONSUMABLES: readonly ConsumableDefinition[] = [];
+/**
+ * Consumables (22): 9 studies (one per hand type, usable in the shop) and 13 that act on cards
+ * from the hand (usable during a blind). Comments: proposed es-419 name and effect.
+ */
+export const CONSUMABLES: readonly ConsumableDefinition[] = [
+  // "Estudio de <mano>": raises that hand type by one level. One per hand category.
+  ...HAND_CATEGORIES.map(
+    (hand): ConsumableDefinition => ({
+      id: `study_${hand}`,
+      cost: 3,
+      targets: null,
+      ops: [{ op: 'levelUpHand', hand }],
+    }),
+  ),
+  // "Refuerzo": gives 1-2 cards the "Reforzada" enhancement.
+  {
+    id: 'reinforce',
+    cost: 3,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'reinforced' }],
+  },
+  // "Carga": gives 1-2 cards the "Cargada" enhancement.
+  {
+    id: 'charge',
+    cost: 4,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'charged' }],
+  },
+  // "Dorado": gives 1-2 cards the "Dorada" enhancement.
+  {
+    id: 'gild',
+    cost: 3,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'gilded' }],
+  },
+  // "Lastre": gives 1-2 cards the "Pesada" enhancement.
+  {
+    id: 'weigh',
+    cost: 3,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'heavy' }],
+  },
+  // "Anclaje": gives 1-2 cards the "Ancla" enhancement.
+  {
+    id: 'anchor_card',
+    cost: 4,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'anchor' }],
+  },
+  // "Volatilizar": gives 1-2 cards the "Volátil" enhancement.
+  {
+    id: 'volatilize',
+    cost: 5,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'volatile' }],
+  },
+  // "Tinta de Picas": turns 1-3 cards into spades.
+  { id: 'paint_s', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 's' }] },
+  // "Tinta de Corazones": turns 1-3 cards into hearts.
+  { id: 'paint_h', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 'h' }] },
+  // "Tinta de Diamantes": turns 1-3 cards into diamonds.
+  { id: 'paint_d', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 'd' }] },
+  // "Tinta de Tréboles": turns 1-3 cards into clubs.
+  { id: 'paint_c', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 'c' }] },
+  // "Ascenso": raises the rank of 1-2 cards by one.
+  { id: 'elevate', cost: 3, targets: { min: 1, max: 2 }, ops: [{ op: 'shiftRank', delta: 1 }] },
+  // "Chatarra": destroys 1-2 cards from the deck.
+  { id: 'scrap', cost: 2, targets: { min: 1, max: 2 }, ops: [{ op: 'destroyCards' }] },
+  // "Gemelo": adds a copy of 1 card to the deck.
+  { id: 'twin', cost: 4, targets: { min: 1, max: 1 }, ops: [{ op: 'duplicateCard' }] },
+];
 
 /** The 5 MVP bosses. Each hinders a different strategy. */
 export const BOSSES: readonly BossDefinition[] = [

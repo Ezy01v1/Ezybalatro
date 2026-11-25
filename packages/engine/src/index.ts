@@ -37,6 +37,7 @@ export type * from './roguelike/types';
 export {
   BOSSES,
   CARD_CHIPS,
+  CONSUMABLES,
   DEFAULT_CONTENT,
   ENHANCEMENTS,
   HAND_TYPES,
