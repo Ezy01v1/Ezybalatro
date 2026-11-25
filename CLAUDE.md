@@ -36,7 +36,7 @@ docs/
 - **Backend:** NestJS · Socket.IO (`@nestjs/websockets`) · API REST + OpenAPI (Swagger).
 - **Base de datos:** PostgreSQL en Supabase o Neon — decidir en Fase 0 (ADR 0005) · conexión pooled para la app, directa para migraciones.
 - **ORM / migraciones:** Prisma o Drizzle — decidir en Fase 0.
-- **Auth:** cuenta de invitado al primer arranque + vincular Google/Apple/email sin perder progreso — proveedor según ADR 0005.
+- **Auth:** solo cuenta de invitado (anónima de Supabase) al primer arranque. Sin login con Google/Apple/email por ahora (decisión del 2026-11-24: Apple cobra por entrar al programa y no se necesita todavía); si algún día se agrega, se revisa el ADR 0005. Proveedor: Supabase (ADR 0005).
 - **Jobs/colas:** ninguno en MVP (pg-boss si aparece la necesidad).
 - **Redis:** ninguno en MVP. Una sola instancia del servidor con el estado de mesas en memoria (ver ADR 0004 y su disparador para escalar).
 - **Hosting del servidor:** proceso persistente (WebSockets), NO serverless (ADR 0006) · Render plan gratis, región Ohio, definido en `render.yaml` (ADR 0009).
@@ -172,7 +172,8 @@ Notas del esqueleto:
 - **Hecho:** Fase 3d, en `main`: servidor desplegado en Render (plan gratis, Ohio) en **https://naipes-server.onrender.com** desde `render.yaml` (deploy al hacer push a `main` con CI verde). Drenado de mesas al apagar (`SHUTDOWN_DRAIN_MS` 20 s), candado de instancia (advisory lock) y recuperación en segundo plano para los deploys sin corte, ADR 0009. Probada el 2026-10-20: `/health`, `/v1/me`, `DELETE /v1/me` y partida del usuario con `pnpm play -- --guest --url https://naipes-server.onrender.com`.
 - **Hecho:** Fase 4b (diseño, sin código): mesa en óvalo clásico, selector de monto con rápidos (Mín, ½ bote, Bote, Todo) + slider, estados de conexión y menú principal con dos tarjetas. Aprobado el 2026-10-24: `docs/design/fase4-mesa-diseno.md` y wireframes en `docs/design/fase4/`.
 - **Hecho (pendiente de prueba en dispositivo):** Fase 4a implementada en la rama `feat/phase-4a-table` (sesión de invitado, cliente de la mesa con Zustand, pantalla de mesa, animaciones/háptica/sonido, menú principal de dos tarjetas). Falta la prueba del usuario en el Galaxy A56: checklist en `docs/superpowers/specs/2026-10-27-fase4a-mesa-app-design.md` ("Prueba manual pendiente").
-- **Siguiente:** probar y mergear la 4a; luego 4c (perfil y borrar cuenta).
+- **Hecho (pendiente de prueba en dispositivo):** Fase 4c implementada sobre la misma rama `feat/phase-4a-table` (2026-11-24): pantalla de perfil (apodo editable, saldo, aviso de invitado) y borrar cuenta desde el engranaje del menú; sin login con Google/Apple (descartado). Checklist en `docs/superpowers/specs/2026-11-24-fase4c-perfil-design.md`.
+- **Siguiente:** probar la 4a y la 4c en el Galaxy A56 y mergear; luego revisión del roguelike contra Balatro.
 - **Deuda técnica conocida:**
   - Mesa móvil (4a): el protocolo no tiene bandera de asiento "desconectado", por eso no se muestra el icono del diseño; falta resaltar las 5 mejores cartas del ganador; animaciones simplificadas respecto al diseño; la duración del turno (20 s) está fija en el view model en vez de venir del servidor.
   - Roguelike: mejoras de carta existen en el pipeline pero aún no hay forma de obtenerlas; consumibles solo "subir nivel de mano" (se aplican al comprar, sin inventario).
