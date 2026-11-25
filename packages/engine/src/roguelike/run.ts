@@ -8,6 +8,8 @@ import { handBase, scoreHand, type ScoreStep } from './scoring';
 import type {
   BlindKind,
   BossDefinition,
+  ConsumableDefinition,
+  ConsumableInstance,
   JokerDefinition,
   JokerEffect,
   JokerInstance,
@@ -31,18 +33,20 @@ export interface RunConfig {
   readonly discards: number;
   readonly maxCardsPerAction: number;
   readonly jokerSlots: number;
+  readonly consumableSlots: number;
+  /** Cards destroyed by consumables can never take the deck below this size. */
+  readonly minDeckSize: number;
   readonly startingMoney: number;
   readonly shopJokerOffers: number;
-  /** Hand level-up consumables offered per shop visit (distinct hand types). */
+  /** Distinct consumables offered per shop visit. */
   readonly shopConsumableOffers: number;
-  readonly consumablePrice: number;
   /** First reroll of a shop visit costs this much; each further reroll costs `rerollCostStep` more. */
   readonly rerollBaseCost: number;
   readonly rerollCostStep: number;
 }
 
 /** Bumped when the saved shape of `RunState` changes; older saves are discarded. */
-export const RUN_STATE_VERSION = 1;
+export const RUN_STATE_VERSION = 2;
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   antes: 8,
@@ -57,10 +61,11 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   discards: 3,
   maxCardsPerAction: 5,
   jokerSlots: 5,
+  consumableSlots: 2,
+  minDeckSize: 20,
   startingMoney: 4,
   shopJokerOffers: 2,
   shopConsumableOffers: 2,
-  consumablePrice: 3,
   rerollBaseCost: 3,
   rerollCostStep: 1,
 };
@@ -73,8 +78,8 @@ export type ShopOffer =
       readonly sold: boolean;
     }
   | {
-      readonly kind: 'levelUp';
-      readonly handType: HandCategory;
+      readonly kind: 'consumable';
+      readonly consumableId: string;
       readonly price: number;
       readonly sold: boolean;
     };
@@ -104,6 +109,7 @@ export interface RunState {
   readonly discardsLeft: number;
   readonly money: number;
   readonly jokers: readonly JokerInstance[];
+  readonly consumables: readonly ConsumableInstance[];
   readonly handLevels: Readonly<Record<HandCategory, number>>;
   readonly handsPlayed: number;
   readonly bestHandScore: number;
@@ -116,6 +122,10 @@ export interface RunState {
     readonly boss: SeededRngState;
   };
   readonly nextJokerNumber: number;
+  /** Next consumable instance id is `c<n>`. */
+  readonly nextConsumableNumber: number;
+  /** Next card created during the run gets an id from this counter. */
+  readonly nextCardNumber: number;
 }
 
 export type RunAction =
@@ -139,7 +149,9 @@ export type RunErrorCode =
   | 'INVALID_OFFER'
   | 'NOT_ENOUGH_MONEY'
   | 'NO_JOKER_SLOT'
-  | 'INVALID_JOKER';
+  | 'INVALID_JOKER'
+  | 'NO_CONSUMABLE_SLOT'
+  | 'INVALID_CONSUMABLE';
 
 export type RunEvent =
   | {
@@ -205,11 +217,12 @@ export interface RunLog {
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 interface Draft extends Omit<
   Mutable<RunState>,
-  'drawPile' | 'hand' | 'jokers' | 'handLevels' | 'shop' | 'rng'
+  'drawPile' | 'hand' | 'jokers' | 'consumables' | 'handLevels' | 'shop' | 'rng'
 > {
   drawPile: RunCard[];
   hand: RunCard[];
   jokers: JokerInstance[];
+  consumables: ConsumableInstance[];
   handLevels: Record<HandCategory, number>;
   shop: ShopOffer[];
   rng: { deck: SeededRngState; shop: SeededRngState; boss: SeededRngState };
@@ -244,6 +257,7 @@ export function createRun(
     discardsLeft: 0,
     money: config.startingMoney,
     jokers: [],
+    consumables: [],
     handLevels: Object.fromEntries(HAND_CATEGORIES.map((h) => [h, 1])) as Record<
       HandCategory,
       number
@@ -258,6 +272,8 @@ export function createRun(
       boss: SeededRng.fromSeed(seed, 'boss').getState(),
     },
     nextJokerNumber: 1,
+    nextConsumableNumber: 1,
+    nextCardNumber: 1,
   };
   pickBoss(d, content);
   startBlind(d, content, events);
@@ -507,7 +523,10 @@ function pickFromHand(d: Draft, cardIds: readonly string[]): RunCard[] | null {
 
 // ---------------------------------------------------------------- shop
 
-/** Random jokers (not owned, no repeats) and level-up consumables (distinct hand types). */
+/**
+ * Random jokers (not owned, no repeats), then distinct consumables. The jokers are drawn first so
+ * the shop sub-stream order of the jokers never moves (saved seeds rely on it).
+ */
 function rollOffers(d: Draft, content: RunContent): ShopOffer[] {
   const rng = new SeededRng(d.rng.shop);
   const owned = new Set(d.jokers.map((j) => j.jokerId));
@@ -517,13 +536,13 @@ function rollOffers(d: Draft, content: RunContent): ShopOffer[] {
     const [joker] = pool.splice(nextInt(rng, pool.length), 1);
     offers.push({ kind: 'joker', jokerId: joker!.id, price: joker!.cost, sold: false });
   }
-  const handTypes = [...HAND_CATEGORIES];
-  for (let i = 0; i < d.config.shopConsumableOffers && handTypes.length > 0; i++) {
-    const [handType] = handTypes.splice(nextInt(rng, handTypes.length), 1);
+  const consumablePool = [...content.consumables];
+  for (let i = 0; i < d.config.shopConsumableOffers && consumablePool.length > 0; i++) {
+    const [consumable] = consumablePool.splice(nextInt(rng, consumablePool.length), 1);
     offers.push({
-      kind: 'levelUp',
-      handType: handType!,
-      price: d.config.consumablePrice,
+      kind: 'consumable',
+      consumableId: consumable!.id,
+      price: consumable!.cost,
       sold: false,
     });
   }
@@ -552,7 +571,14 @@ function buy(
   const offer = d.shop[offerIndex];
   if (!offer || offer.sold) return err('INVALID_OFFER', 'No such offer');
   if (d.money < offer.price) return err('NOT_ENOUGH_MONEY', 'Not enough money');
-  if (offer.kind === 'joker') {
+  if (offer.kind === 'consumable') {
+    if (d.consumables.length >= d.config.consumableSlots)
+      return err('NO_CONSUMABLE_SLOT', 'All consumable slots are full');
+    d.consumables.push({
+      instanceId: `c${d.nextConsumableNumber++}`,
+      consumableId: offer.consumableId,
+    });
+  } else {
     if (d.jokers.length >= d.config.jokerSlots)
       return err('NO_JOKER_SLOT', 'All joker slots are full');
     const def = content.jokers.find((j) => j.id === offer.jokerId);
@@ -561,8 +587,6 @@ function buy(
       jokerId: offer.jokerId,
       state: { ...def?.initialState },
     });
-  } else {
-    d.handLevels[offer.handType] += 1;
   }
   d.money -= offer.price;
   d.shop[offerIndex] = { ...offer, sold: true };
@@ -597,6 +621,22 @@ function sellJoker(
 }
 
 // ---------------------------------------------------------------- helpers
+
+export function findConsumable(
+  id: string,
+  content: RunContent = DEFAULT_CONTENT,
+): ConsumableDefinition | undefined {
+  return content.consumables.find((c) => c.id === id);
+}
+
+/** Money you get for selling a consumable: half its price, rounded down, at least $1. */
+export function consumableSellValue(
+  consumable: ConsumableInstance,
+  content: RunContent = DEFAULT_CONTENT,
+): number {
+  const cost = findConsumable(consumable.consumableId, content)?.cost ?? 2;
+  return Math.max(1, Math.floor(cost / 2));
+}
 
 /** Money you get for selling a joker: half its price, rounded down, at least $1. */
 export function jokerSellValue(
@@ -695,6 +735,7 @@ function toDraft(state: RunState): Draft {
     drawPile: [...state.drawPile],
     hand: [...state.hand],
     jokers: [...state.jokers],
+    consumables: [...state.consumables],
     handLevels: { ...state.handLevels },
     shop: [...state.shop],
     rng: { ...state.rng },

@@ -3,6 +3,7 @@ import {
   DEFAULT_CONTENT,
   DEFAULT_RUN_CONFIG,
   RUN_STATE_VERSION,
+  consumableSellValue,
   createRun,
   hasUniqueIds,
   isCardDebuffed,
@@ -136,9 +137,25 @@ describe('rounds, rewards and shop', () => {
       money: 20,
     });
     expect([state.phase, state.blind, state.money]).toEqual(['shop', 'big', 20]);
-    expect(state.shop.map((o) => o.kind)).toEqual(['joker', 'joker', 'levelUp', 'levelUp']);
+    expect(state.shop.map((o) => o.kind)).toEqual(['joker', 'joker', 'consumable', 'consumable']);
     const [, , a, b] = state.shop;
-    expect(a?.kind === 'levelUp' && b?.kind === 'levelUp' && a.handType !== b.handType).toBe(true);
+    expect(
+      a?.kind === 'consumable' && b?.kind === 'consumable' && a.consumableId !== b.consumableId,
+    ).toBe(true);
+    for (const offer of [a, b]) {
+      if (offer?.kind !== 'consumable') throw new Error('Expected a consumable offer');
+      const def = DEFAULT_CONTENT.consumables.find((c) => c.id === offer.consumableId)!;
+      expect(offer).toMatchObject({ price: def.cost, sold: false });
+    }
+  });
+
+  it('keeps the joker draw order of the shop sub-stream (consumables are drawn after)', () => {
+    // Recorded before consumables existed: the e2e seed depends on these two staying put.
+    const { state } = playFirst(createRun('seed', { ...EASY, startingMoney: 12 }).state);
+    expect(state.shop.slice(0, 2)).toEqual([
+      { kind: 'joker', jokerId: 'tip_jar', price: 4, sold: false },
+      { kind: 'joker', jokerId: 'ember', price: 4, sold: false },
+    ]);
   });
 
   it('interest is capped', () => {
@@ -146,13 +163,11 @@ describe('rounds, rewards and shop', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'roundWon', interest: 4 }));
   });
 
-  it('buy, sell and reorder jokers; level up a hand', () => {
+  it('buy, sell and reorder jokers', () => {
     let state = playFirst(createRun('shop', { ...EASY, startingMoney: 50 }).state).state;
     state = act(state, { type: 'buy', offerIndex: 0 }).state;
     state = act(state, { type: 'buy', offerIndex: 1 }).state;
-    state = act(state, { type: 'buy', offerIndex: 2 }).state;
     expect(state.jokers.map((j) => j.instanceId)).toEqual(['j1', 'j2']);
-    expect(Object.values(state.handLevels).filter((l) => l === 2)).toHaveLength(1);
     expect(errorOf(state, { type: 'buy', offerIndex: 0 })).toBe('INVALID_OFFER');
     expect(errorOf(state, { type: 'buy', offerIndex: 9 })).toBe('INVALID_OFFER');
 
@@ -174,6 +189,60 @@ describe('rounds, rewards and shop', () => {
       4,
     ]);
     expect(errorOf(state, { type: 'sellJoker', instanceId: 'j1' })).toBe('INVALID_PHASE');
+  });
+
+  describe('consumable purchase', () => {
+    const shopWith = (config: Partial<RunConfig> = {}) =>
+      playFirst(createRun('shop', { ...EASY, startingMoney: 50, ...config }).state).state;
+    const consumableOffer = (state: RunState, index: number) => {
+      const offer = state.shop[index];
+      if (offer?.kind !== 'consumable') throw new Error('Expected a consumable offer');
+      return offer;
+    };
+
+    it('adds it to the inventory and charges the exact price', () => {
+      const atShop = shopWith();
+      const offer = consumableOffer(atShop, 2);
+      const { state, events } = act(atShop, { type: 'buy', offerIndex: 2 });
+      expect(state.consumables).toEqual([{ instanceId: 'c1', consumableId: offer.consumableId }]);
+      expect(state.money).toBe(atShop.money - offer.price);
+      expect(state.shop[2]).toEqual({ ...offer, sold: true });
+      expect(events).toEqual([{ type: 'bought', offerIndex: 2, money: state.money }]);
+      const second = act(state, { type: 'buy', offerIndex: 3 }).state;
+      expect(second.consumables.map((c) => c.instanceId)).toEqual(['c1', 'c2']);
+    });
+
+    it('fails with NO_CONSUMABLE_SLOT when the inventory is full and changes nothing', () => {
+      const bought = act(shopWith({ consumableSlots: 1 }), { type: 'buy', offerIndex: 2 }).state;
+      const before = JSON.stringify(bought);
+      const result = runReducer(bought, { type: 'buy', offerIndex: 3 });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe('NO_CONSUMABLE_SLOT');
+      expect(JSON.stringify(bought)).toBe(before);
+      expect(bought.shop[3]).toMatchObject({ sold: false });
+    });
+
+    it('needs exactly the price: enough money passes, one less fails', () => {
+      const atShop = shopWith();
+      const { price } = consumableOffer(atShop, 2);
+      const exact = act({ ...atShop, money: price }, { type: 'buy', offerIndex: 2 }).state;
+      expect(exact.money).toBe(0);
+      expect(errorOf({ ...atShop, money: price - 1 }, { type: 'buy', offerIndex: 2 })).toBe(
+        'NOT_ENOUGH_MONEY',
+      );
+    });
+
+    it('sells for half the price, rounded down, at least $1', () => {
+      const withCost = (cost: number): RunContent => ({
+        ...DEFAULT_CONTENT,
+        consumables: [{ ...DEFAULT_CONTENT.consumables[0]!, id: 'x', cost }],
+      });
+      const instance = { instanceId: 'c1', consumableId: 'x' };
+      expect(consumableSellValue(instance, withCost(3))).toBe(1);
+      expect(consumableSellValue(instance, withCost(5))).toBe(2);
+      expect(consumableSellValue(instance, withCost(1))).toBe(1);
+      expect(consumableSellValue({ instanceId: 'c1', consumableId: 'unknown' })).toBe(1);
+    });
   });
 
   it('money and slots are enforced', () => {
@@ -378,5 +447,16 @@ describe('MVP content and shop', () => {
 
   it('saved states carry the schema version', () => {
     expect(createRun('v').state.version).toBe(RUN_STATE_VERSION);
+    expect(RUN_STATE_VERSION).toBe(2);
+  });
+
+  it('starts with an empty inventory and counters at 1', () => {
+    const { state } = createRun('inv');
+    expect([state.consumables, state.nextConsumableNumber, state.nextCardNumber]).toEqual([
+      [],
+      1,
+      1,
+    ]);
+    expect([state.config.consumableSlots, state.config.minDeckSize]).toEqual([2, 20]);
   });
 });

@@ -60,7 +60,9 @@ export type { PlayPreview } from './roguelike/run';
 export {
   DEFAULT_RUN_CONFIG,
   RUN_STATE_VERSION,
+  consumableSellValue,
   createRun,
+  findConsumable,
   isCardDebuffed,
   jokerSellValue,
   previewPlay,

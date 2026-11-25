@@ -4,7 +4,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { playSound } from '@/feedback/feedback';
 import { formatMoney } from '@/game/format';
 import { useGame } from '@/game/store';
-import { BOSS_TEXTS, es, HAND_NAMES, JOKER_TEXTS } from '@/i18n/es';
+import { BOSS_TEXTS, es, JOKER_TEXTS } from '@/i18n/es';
 import { colors, layout, radii, spacing } from '@/theme/tokens';
 import { Button, DecoRule, Screen, Text } from '@/ui/primitives';
 import { useArmed } from '@/ui/useArmed';
@@ -22,14 +22,17 @@ function OfferCard({
   run: RunState;
   onBuy: (index: number) => void;
 }) {
+  // Minimal consumable branch; the full consumable shop UI comes later.
   const title =
     offer.kind === 'joker'
       ? (JOKER_TEXTS[offer.jokerId]?.name ?? offer.jokerId)
-      : es.shop.levelUp(HAND_NAMES[offer.handType]);
-  const description =
-    offer.kind === 'joker' ? (JOKER_TEXTS[offer.jokerId]?.description ?? '') : es.shop.levelUpDesc;
+      : offer.consumableId;
+  const description = offer.kind === 'joker' ? (JOKER_TEXTS[offer.jokerId]?.description ?? '') : '';
   const missing = offer.price - run.money;
-  const full = offer.kind === 'joker' && run.jokers.length >= run.config.jokerSlots;
+  const full =
+    offer.kind === 'joker'
+      ? run.jokers.length >= run.config.jokerSlots
+      : run.consumables.length >= run.config.consumableSlots;
   const status = offer.sold
     ? es.shop.bought
     : full
@@ -105,7 +108,7 @@ export function ShopScreen({ run }: { run: RunState }) {
         </Text>
         {run.shop.map((offer, index) => (
           <OfferCard
-            key={`${index}-${offer.kind === 'joker' ? offer.jokerId : offer.handType}`}
+            key={`${index}-${offer.kind === 'joker' ? offer.jokerId : offer.consumableId}`}
             offer={offer}
             index={index}
             run={run}
