@@ -9,8 +9,10 @@ import {
   isCardDebuffed,
   previewPlay,
   runReducer,
+  type ConsumableDefinition,
   type JokerDefinition,
   type RunAction,
+  type RunCard,
   type RunConfig,
   type RunContent,
   type RunEvent,
@@ -458,5 +460,267 @@ describe('MVP content and shop', () => {
       1,
     ]);
     expect([state.config.consumableSlots, state.config.minDeckSize]).toEqual([2, 20]);
+  });
+});
+
+describe('applying and selling consumables', () => {
+  const inventory = (state: RunState, ...consumableIds: string[]): RunState => ({
+    ...state,
+    consumables: consumableIds.map((consumableId, i) => ({
+      instanceId: `c${i + 1}`,
+      consumableId,
+    })),
+  });
+  /** Same state, with card `id` changed in both the hand and the deck (as a consumable would). */
+  const patchCard = (state: RunState, id: string, patch: Partial<RunCard>): RunState => {
+    const swap = (cards: readonly RunCard[]) =>
+      cards.map((c) => (c.id === id ? { ...c, ...patch } : c));
+    return { ...state, hand: swap(state.hand), deck: swap(state.deck) };
+  };
+  const inBlind = () => createRun('consume').state;
+  const inShop = () => playFirst(createRun('consume', EASY).state).state;
+  const errorCode = (state: RunState, action: RunAction, content?: RunContent) => {
+    const result = runReducer(deepFreeze(state), action, content);
+    if (result.ok) throw new Error('Expected the action to be rejected');
+    return result.error.code;
+  };
+  const use = (instanceId: string, ...cardIds: string[]): RunAction => ({
+    type: 'applyConsumable',
+    instanceId,
+    cardIds,
+  });
+  const withContent = (...consumables: ConsumableDefinition[]): RunContent => ({
+    ...DEFAULT_CONTENT,
+    consumables,
+  });
+
+  describe('studies (no targets)', () => {
+    it('raise that hand type by one level in the shop and free the slot', () => {
+      const state = inventory(inShop(), 'study_pair');
+      const { state: next, events } = act(state, { type: 'applyConsumable', instanceId: 'c1' });
+      expect(next.handLevels.pair).toBe(state.handLevels.pair + 1);
+      expect(next.handLevels.flush).toBe(state.handLevels.flush);
+      expect(next.consumables).toEqual([]);
+      expect(events).toEqual([
+        { type: 'consumableUsed', instanceId: 'c1', consumableId: 'study_pair', cardIds: [] },
+      ]);
+    });
+
+    it('also work during a blind', () => {
+      const state = inventory(inBlind(), 'study_flush', 'study_pair');
+      const { state: next } = act(state, {
+        type: 'applyConsumable',
+        instanceId: 'c1',
+        cardIds: [],
+      });
+      expect(next.handLevels.flush).toBe(2);
+      expect(next.consumables).toEqual([{ instanceId: 'c2', consumableId: 'study_pair' }]);
+    });
+
+    it('reject cards with INVALID_CARDS', () => {
+      const state = inventory(inBlind(), 'study_pair');
+      expect(errorCode(state, use('c1', state.hand[0]!.id))).toBe('INVALID_CARDS');
+    });
+  });
+
+  describe('card consumables', () => {
+    it('paint_h changes the suit in the hand and in the deck and keeps the ids', () => {
+      const base = inventory(inBlind(), 'paint_h');
+      const ids = base.hand
+        .filter((c) => c.suit !== 'h')
+        .slice(0, 2)
+        .map((c) => c.id);
+      const { state, events } = act(base, use('c1', ...ids));
+      for (const id of ids) {
+        expect(state.hand.find((c) => c.id === id)?.suit).toBe('h');
+        expect(state.deck.find((c) => c.id === id)?.suit).toBe('h');
+      }
+      expect(state.hand.map((c) => c.id)).toEqual(base.hand.map((c) => c.id));
+      expect(state.deck.map((c) => c.id)).toEqual(base.deck.map((c) => c.id));
+      expect(state.hand.map((c) => c.rank)).toEqual(base.hand.map((c) => c.rank));
+      expect(state.hand.filter((c) => !ids.includes(c.id))).toEqual(
+        base.hand.filter((c) => !ids.includes(c.id)),
+      );
+      expect(state.consumables).toEqual([]);
+      expect(events).toEqual([
+        { type: 'consumableUsed', instanceId: 'c1', consumableId: 'paint_h', cardIds: ids },
+      ]);
+    });
+
+    it('reinforce marks the card and it scores +25 chips more when played', () => {
+      const base = inventory(inBlind(), 'reinforce');
+      const id = base.hand[0]!.id;
+      const chipsOf = (state: RunState) => {
+        const { events } = act(state, { type: 'play', cardIds: [id] });
+        const scored = events.find((e) => e.type === 'handScored');
+        if (scored?.type !== 'handScored') throw new Error('No hand scored');
+        return scored.chips;
+      };
+      const { state } = act(base, use('c1', id));
+      expect(state.hand.find((c) => c.id === id)?.enhancement).toBe('reinforced');
+      expect(state.deck.find((c) => c.id === id)?.enhancement).toBe('reinforced');
+      expect(chipsOf(state)).toBe(chipsOf(base) + 25);
+    });
+
+    it('elevate turns a 9 into a 10 and keeps the id', () => {
+      const base = inventory(inBlind(), 'elevate');
+      const id = base.hand[0]!.id;
+      const { state } = act(patchCard(base, id, { rank: 9 }), use('c1', id));
+      expect(state.hand.find((c) => c.id === id)?.rank).toBe(10);
+      expect(state.deck.find((c) => c.id === id)?.rank).toBe(10);
+    });
+
+    it('elevate on an Ace fails with INVALID_CARDS and changes nothing', () => {
+      const base = inventory(inBlind(), 'elevate');
+      const [five, ace] = [base.hand[0]!.id, base.hand[1]!.id];
+      const state = patchCard(patchCard(base, five, { rank: 5 }), ace, { rank: 14 });
+      const before = JSON.stringify(state);
+      expect(errorCode(state, use('c1', ace))).toBe('INVALID_CARDS');
+      // The valid card goes first: the failed action must not leak its change.
+      expect(errorCode(state, use('c1', five, ace))).toBe('INVALID_CARDS');
+      expect(JSON.stringify(state)).toBe(before);
+    });
+
+    it('a shiftRank of -1 on a 2 fails with INVALID_CARDS', () => {
+      const lower: ConsumableDefinition = {
+        id: 'lower',
+        cost: 3,
+        targets: { min: 1, max: 1 },
+        ops: [{ op: 'shiftRank', delta: -1 }],
+      };
+      const content = withContent(lower);
+      const base = inventory(inBlind(), 'lower');
+      const id = base.hand[0]!.id;
+      expect(errorCode(patchCard(base, id, { rank: 2 }), use('c1', id), content)).toBe(
+        'INVALID_CARDS',
+      );
+      const { state } = act(patchCard(base, id, { rank: 5 }), use('c1', id), content);
+      expect(state.hand.find((c) => c.id === id)?.rank).toBe(4);
+    });
+
+    it('applies the operations of a consumable in order', () => {
+      const combo: ConsumableDefinition = {
+        id: 'combo',
+        cost: 3,
+        targets: { min: 1, max: 1 },
+        ops: [
+          { op: 'shiftRank', delta: 2 },
+          { op: 'changeSuit', suit: 'c' },
+          { op: 'enhanceCards', enhancement: 'reinforced' },
+        ],
+      };
+      const base = inventory(inBlind(), 'combo');
+      const id = base.hand[0]!.id;
+      const { state } = act(
+        patchCard(base, id, { rank: 5, suit: 's' }),
+        use('c1', id),
+        withContent(combo),
+      );
+      expect(state.hand.find((c) => c.id === id)).toMatchObject({
+        id,
+        rank: 7,
+        suit: 'c',
+        enhancement: 'reinforced',
+      });
+    });
+
+    it('an unknown enhancement is INVALID_CONSUMABLE', () => {
+      const broken: ConsumableDefinition = {
+        id: 'broken',
+        cost: 3,
+        targets: { min: 1, max: 1 },
+        ops: [{ op: 'enhanceCards', enhancement: 'nope' }],
+      };
+      const base = inventory(inBlind(), 'broken');
+      expect(errorCode(base, use('c1', base.hand[0]!.id), withContent(broken))).toBe(
+        'INVALID_CONSUMABLE',
+      );
+    });
+
+    it('validates the selected cards', () => {
+      const base = inventory(inBlind(), 'paint_s'); // 1 to 3 cards
+      const [a, b, c, d] = base.hand.map((x) => x.id) as [string, string, string, string];
+      expect(errorCode(base, use('c1'))).toBe('INVALID_CARDS');
+      expect(errorCode(base, { type: 'applyConsumable', instanceId: 'c1' })).toBe('INVALID_CARDS');
+      expect(errorCode(base, use('c1', a, b, c, d))).toBe('INVALID_CARDS');
+      expect(errorCode(base, use('c1', a, a))).toBe('INVALID_CARDS');
+      expect(errorCode(base, use('c1', a, 'XX'))).toBe('INVALID_CARDS');
+      // In the deck but not in the hand (it is in the draw pile).
+      expect(errorCode(base, use('c1', base.drawPile[0]!.id))).toBe('INVALID_CARDS');
+      expect(act(base, use('c1', a, b, c)).state.consumables).toEqual([]);
+    });
+
+    it('cannot be used in the shop', () => {
+      const state = inventory(inShop(), 'paint_s');
+      expect(errorCode(state, use('c1', state.deck[0]!.id))).toBe('INVALID_PHASE');
+      expect(errorCode(state, { type: 'applyConsumable', instanceId: 'c1' })).toBe('INVALID_PHASE');
+    });
+  });
+
+  it('an unknown instance is INVALID_CONSUMABLE', () => {
+    const state = inventory(inBlind(), 'study_pair');
+    expect(errorCode(state, { type: 'applyConsumable', instanceId: 'c9' })).toBe(
+      'INVALID_CONSUMABLE',
+    );
+    expect(errorCode(state, { type: 'sellConsumable', instanceId: 'c9' })).toBe(
+      'INVALID_CONSUMABLE',
+    );
+  });
+
+  it('an instance whose definition is not in the content is INVALID_CONSUMABLE', () => {
+    const state = inventory(inBlind(), 'ghost');
+    expect(errorCode(state, { type: 'applyConsumable', instanceId: 'c1' })).toBe(
+      'INVALID_CONSUMABLE',
+    );
+  });
+
+  it('destroyCards and duplicateCard are not available yet', () => {
+    for (const op of [{ op: 'destroyCards' }, { op: 'duplicateCard' }] as const) {
+      const def: ConsumableDefinition = {
+        id: 'x',
+        cost: 3,
+        targets: { min: 1, max: 1 },
+        ops: [op],
+      };
+      const base = inventory(inBlind(), 'x');
+      expect(errorCode(base, use('c1', base.hand[0]!.id), withContent(def))).toBe(
+        'INVALID_CONSUMABLE',
+      );
+    }
+  });
+
+  describe('selling', () => {
+    it('in a blind adds the sell value and removes the instance', () => {
+      const base = inventory(inBlind(), 'paint_s', 'study_pair');
+      const { state, events } = act(base, { type: 'sellConsumable', instanceId: 'c2' });
+      const value = consumableSellValue(base.consumables[1]!);
+      expect(value).toBe(1);
+      expect(state.money).toBe(base.money + value);
+      expect(state.consumables).toEqual([{ instanceId: 'c1', consumableId: 'paint_s' }]);
+      expect(events).toEqual([{ type: 'consumableSold', instanceId: 'c2', money: state.money }]);
+    });
+
+    it('works in the shop too', () => {
+      const base = inventory(inShop(), 'study_pair');
+      const { state } = act(base, { type: 'sellConsumable', instanceId: 'c1' });
+      expect(state.money).toBe(base.money + 1);
+      expect(state.consumables).toEqual([]);
+    });
+
+    it('selling the same instance twice fails', () => {
+      const once = act(inventory(inBlind(), 'study_pair'), {
+        type: 'sellConsumable',
+        instanceId: 'c1',
+      }).state;
+      expect(errorCode(once, { type: 'sellConsumable', instanceId: 'c1' })).toBe(
+        'INVALID_CONSUMABLE',
+      );
+    });
+  });
+
+  it('both actions fail with RUN_OVER once the run has ended', () => {
+    const over = act(inventory(inBlind(), 'study_pair'), { type: 'abandon' }).state;
+    expect(errorCode(over, { type: 'applyConsumable', instanceId: 'c1' })).toBe('RUN_OVER');
+    expect(errorCode(over, { type: 'sellConsumable', instanceId: 'c1' })).toBe('RUN_OVER');
   });
 });

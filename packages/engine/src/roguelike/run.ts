@@ -1,4 +1,4 @@
-import { createStandardDeck, shuffleDeck, SUITS } from '../cards';
+import { createStandardDeck, RANKS, shuffleDeck, SUITS, type Rank } from '../cards';
 import { HAND_CATEGORIES, type HandCategory } from '../hands/hand-category';
 import { evaluatePlayedHand } from '../hands/played-hand';
 import { nextInt } from '../rng';
@@ -10,6 +10,7 @@ import type {
   BossDefinition,
   ConsumableDefinition,
   ConsumableInstance,
+  ConsumableOp,
   JokerDefinition,
   JokerEffect,
   JokerInstance,
@@ -134,6 +135,13 @@ export type RunAction =
   | { readonly type: 'discard'; readonly cardIds: readonly string[] }
   | { readonly type: 'buy'; readonly offerIndex: number }
   | { readonly type: 'sellJoker'; readonly instanceId: string }
+  /** `cardIds` are hand cards, only for consumables that ask for targets. */
+  | {
+      readonly type: 'applyConsumable';
+      readonly instanceId: string;
+      readonly cardIds?: readonly string[];
+    }
+  | { readonly type: 'sellConsumable'; readonly instanceId: string }
   | { readonly type: 'moveJoker'; readonly from: number; readonly to: number }
   | { readonly type: 'reroll' }
   | { readonly type: 'leaveShop' }
@@ -196,6 +204,13 @@ export type RunEvent =
     }
   | { readonly type: 'bought'; readonly offerIndex: number; readonly money: number }
   | { readonly type: 'jokerSold'; readonly instanceId: string; readonly money: number }
+  | {
+      readonly type: 'consumableUsed';
+      readonly instanceId: string;
+      readonly consumableId: string;
+      readonly cardIds: readonly string[];
+    }
+  | { readonly type: 'consumableSold'; readonly instanceId: string; readonly money: number }
   | { readonly type: 'runWon' }
   | { readonly type: 'runLost' }
   | { readonly type: 'runAbandoned' };
@@ -327,6 +342,10 @@ function apply(
       return buy(d, action.offerIndex, content, events);
     case 'sellJoker':
       return sellJoker(d, action.instanceId, content, events);
+    case 'applyConsumable':
+      return applyConsumable(d, action.instanceId, action.cardIds ?? [], content, events);
+    case 'sellConsumable':
+      return sellConsumable(d, action.instanceId, content, events);
     case 'moveJoker': {
       const { from, to } = action;
       const valid = (i: number) => Number.isInteger(i) && i >= 0 && i < d.jokers.length;
@@ -620,6 +639,116 @@ function sellJoker(
   return null;
 }
 
+// ---------------------------------------------------------------- consumables
+
+/**
+ * Uses a consumable from the inventory. Consumables without targets work in the shop and in a
+ * blind; those that ask for cards only work in a blind, on cards from the hand. On error the
+ * caller discards the draft, so a failed operation never leaks a change.
+ */
+function applyConsumable(
+  d: Draft,
+  instanceId: string,
+  cardIds: readonly string[],
+  content: RunContent,
+  events: RunEvent[],
+): RunError | null {
+  const index = d.consumables.findIndex((c) => c.instanceId === instanceId);
+  const instance = d.consumables[index];
+  if (!instance) return err('INVALID_CONSUMABLE', 'No such consumable');
+  const def = findConsumable(instance.consumableId, content);
+  if (!def) return err('INVALID_CONSUMABLE', 'Unknown consumable');
+
+  if (def.targets === null) {
+    if (cardIds.length > 0) return err('INVALID_CARDS', 'This consumable takes no cards');
+  } else {
+    if (d.phase !== 'blind') return err('INVALID_PHASE', 'This consumable needs cards from a hand');
+    const { min, max } = def.targets;
+    if (
+      cardIds.length < min ||
+      cardIds.length > max ||
+      new Set(cardIds).size !== cardIds.length ||
+      !cardIds.every((id) => d.hand.some((c) => c.id === id))
+    )
+      return err('INVALID_CARDS', `Select ${min} to ${max} different cards from your hand`);
+  }
+
+  for (const op of def.ops) {
+    const error = applyOp(d, op, cardIds, content);
+    if (error) return error;
+  }
+  d.consumables.splice(index, 1);
+  events.push({ type: 'consumableUsed', instanceId, consumableId: def.id, cardIds });
+  return null;
+}
+
+/** The single interpreter of consumable operations: switches on `op.op` only, never on an id. */
+function applyOp(
+  d: Draft,
+  op: ConsumableOp,
+  targetIds: readonly string[],
+  content: RunContent,
+): RunError | null {
+  switch (op.op) {
+    case 'levelUpHand':
+      d.handLevels[op.hand] += 1;
+      return null;
+    case 'enhanceCards':
+      if (!content.enhancements.some((e) => e.id === op.enhancement))
+        return err('INVALID_CONSUMABLE', 'Unknown enhancement');
+      return replaceCards(d, targetIds, (card) => ({ ...card, enhancement: op.enhancement }));
+    case 'changeSuit':
+      return replaceCards(d, targetIds, (card) => ({ ...card, suit: op.suit }));
+    case 'shiftRank':
+      return replaceCards(d, targetIds, (card) => {
+        const rank = card.rank + op.delta;
+        return (RANKS as readonly number[]).includes(rank) ? { ...card, rank: rank as Rank } : null;
+      });
+    case 'destroyCards':
+    case 'duplicateCard':
+      return err('INVALID_CONSUMABLE', 'Not available yet');
+    default:
+      return unreachable(op);
+  }
+}
+
+/**
+ * Swaps each target for its changed copy (same `id`) in the hand and in the deck, so the change
+ * lasts for the rest of the run. `change` returns null when the card cannot take it; nothing is
+ * replaced then.
+ */
+function replaceCards(
+  d: Draft,
+  ids: readonly string[],
+  change: (card: RunCard) => RunCard | null,
+): RunError | null {
+  const changed = new Map<string, RunCard>();
+  for (const id of ids) {
+    const card = d.hand.find((c) => c.id === id);
+    const next = card ? change(card) : null;
+    if (!next) return err('INVALID_CARDS', 'A selected card cannot take that change');
+    changed.set(id, next);
+  }
+  const swap = (card: RunCard) => changed.get(card.id) ?? card;
+  d.hand = d.hand.map(swap);
+  d.deck = d.deck.map(swap);
+  return null;
+}
+
+function sellConsumable(
+  d: Draft,
+  instanceId: string,
+  content: RunContent,
+  events: RunEvent[],
+): RunError | null {
+  const index = d.consumables.findIndex((c) => c.instanceId === instanceId);
+  if (index === -1) return err('INVALID_CONSUMABLE', 'No such consumable');
+  d.money += consumableSellValue(d.consumables[index]!, content);
+  d.consumables.splice(index, 1);
+  events.push({ type: 'consumableSold', instanceId, money: d.money });
+  return null;
+}
+
 // ---------------------------------------------------------------- helpers
 
 export function findConsumable(
@@ -744,6 +873,10 @@ function toDraft(state: RunState): Draft {
 
 function err(code: RunErrorCode, message: string): RunError {
   return { code, message };
+}
+
+function unreachable(value: never): never {
+  throw new Error(`Unhandled consumable operation: ${JSON.stringify(value)}`);
 }
 
 function fail(code: RunErrorCode, message: string): RunResult {
