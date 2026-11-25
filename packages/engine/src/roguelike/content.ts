@@ -1,6 +1,7 @@
 import type { Rank } from '../cards';
 import type {
   BossDefinition,
+  ConsumableDefinition,
   EnhancementDefinition,
   HandTypeStats,
   JokerDefinition,
@@ -189,13 +190,24 @@ export const JOKERS: readonly JokerDefinition[] = [
   },
 ];
 
-/** Sample card enhancements (cards get them through consumables in a later phase). */
+/** Card enhancements (cards get them through consumables). */
 export const ENHANCEMENTS: readonly EnhancementDefinition[] = [
   // "Reforzada": +25 chips when it scores.
   { id: 'reinforced', onScored: () => ({ chips: 25 }) },
   // "Ancla": ×1.5 mult while it stays in hand.
   { id: 'anchor', onHeld: () => ({ xMult: 1.5 }) },
+  // "Cargada": +4 mult when it scores.
+  { id: 'charged', onScored: () => ({ mult: 4 }) },
+  // "Dorada": +$2 when it scores.
+  { id: 'gilded', onScored: () => ({ money: 2 }) },
+  // "Pesada": +30 chips while it stays in hand.
+  { id: 'heavy', onHeld: () => ({ chips: 30 }) },
+  // "Volátil": ×1.3 mult when it scores.
+  { id: 'volatile', onScored: () => ({ xMult: 1.3 }) },
 ];
+
+/** Consumables (filled in with the content of phase 5a). */
+export const CONSUMABLES: readonly ConsumableDefinition[] = [];
 
 /** The 5 MVP bosses. Each hinders a different strategy. */
 export const BOSSES: readonly BossDefinition[] = [
@@ -215,5 +227,6 @@ export const DEFAULT_CONTENT: RunContent = {
   jokers: JOKERS,
   enhancements: ENHANCEMENTS,
   bosses: BOSSES,
+  consumables: CONSUMABLES,
   handTypes: HAND_TYPES,
 };

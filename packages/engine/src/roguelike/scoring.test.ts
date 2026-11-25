@@ -147,3 +147,81 @@ describe('scoreHand: pipeline order with held cards and enhancements', () => {
     expect([result.chips, result.score]).toEqual([19, 38]);
   });
 });
+
+describe('scoreHand: card enhancements', () => {
+  const withEnhancement = (cards: string, enhancement: string): RunCard[] =>
+    parseCards(cards).map((c) => ({ ...c, enhancement }));
+  const stepKinds = (result: ReturnType<typeof scoreHand>) =>
+    result.steps.map((s) =>
+      s.source.kind === 'enhancement' ? `enhancement:${s.source.cardId}` : s.source.kind,
+    );
+
+  it('charged adds +4 mult once per scoring card that has it', () => {
+    const [seven, other] = parseCards('7h 7d');
+    const one = scoreHand({
+      ...input('7h 7d'),
+      played: [{ ...seven!, enhancement: 'charged' }, other!],
+    });
+    // chips 12 + 7 + 7 = 26; mult 2 + 4 = 6.
+    expect([one.chips, one.mult, one.score]).toEqual([26, 6, 156]);
+    expect(stepKinds(one)).toEqual(['base', 'card', 'enhancement:7h', 'card']);
+
+    const both = scoreHand({ ...input('7h 7d'), played: withEnhancement('7h 7d', 'charged') });
+    expect([both.mult, both.score]).toEqual([10, 260]);
+  });
+
+  it('charged on a card that does not score does nothing', () => {
+    const played = [...parseCards('7h 7d'), { ...parseCards('2c')[0]!, enhancement: 'charged' }];
+    const result = scoreHand({ ...input('7h 7d'), played });
+    expect([result.mult, result.score]).toEqual([2, 52]);
+  });
+
+  it('gilded adds $2 to the money earned while scoring, without changing the score', () => {
+    const result = scoreHand({
+      ...input('7h 7d'),
+      played: withEnhancement('7h 7d', 'gilded').slice(0, 1).concat(parseCards('7d')),
+    });
+    expect(result.money).toBe(2);
+    expect(result.score).toBe(52);
+    expect(result.steps.find((s) => s.source.kind === 'enhancement')!.effect).toEqual({ money: 2 });
+  });
+
+  it('heavy adds +30 chips while it stays in hand', () => {
+    const result = scoreHand({ ...input('7h 7d'), held: withEnhancement('Kc', 'heavy') });
+    // chips 26 + 30 = 56; mult 2.
+    expect([result.chips, result.mult, result.score]).toEqual([56, 2, 112]);
+    expect(stepKinds(result)).toEqual(['base', 'card', 'card', 'enhancement:Kc']);
+    expect(result.steps.at(-1)!.source).toMatchObject({ kind: 'enhancement', held: true });
+  });
+
+  it('heavy does nothing when the card is played', () => {
+    const played = [{ ...parseCards('7h')[0]!, enhancement: 'heavy' }, parseCards('7d')[0]!];
+    const result = scoreHand({ ...input('7h 7d'), played });
+    expect([result.chips, result.score]).toEqual([26, 52]);
+    expect(stepKinds(result)).toEqual(['base', 'card', 'card']);
+  });
+
+  it('volatile multiplies mult by 1.3 after the +mult already added', () => {
+    const [first, second] = parseCards('7h 7d');
+    const result = scoreHand({
+      ...input('7h 7d'),
+      played: [
+        { ...first!, enhancement: 'charged' },
+        { ...second!, enhancement: 'volatile' },
+      ],
+    });
+    // (2 + 4) × 1.3 = 7.8; 26 × 7.8 = 202.8.
+    expect(result.mult).toBeCloseTo(7.8);
+    expect(result.score).toBe(202);
+    expect(result.steps.at(-1)!.effect).toEqual({ xMult: 1.3 });
+  });
+
+  it('volatile on its own: ×1.3 over the base mult', () => {
+    const result = scoreHand({
+      ...input('7h 7d'),
+      played: withEnhancement('7h', 'volatile').concat(parseCards('7d')),
+    });
+    expect(result.mult).toBeCloseTo(2.6);
+    expect(result.score).toBe(67);
+  });
+});

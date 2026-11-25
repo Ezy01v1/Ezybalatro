@@ -85,6 +85,35 @@ export interface EnhancementDefinition {
   onHeld?(card: RunCard, ctx: HandContext): Effect | undefined;
 }
 
+/** One operation of a consumable, applied in order. Adding a consumable never touches the reducer. */
+export type ConsumableOp =
+  | { readonly op: 'levelUpHand'; readonly hand: HandCategory }
+  | { readonly op: 'enhanceCards'; readonly enhancement: string }
+  | { readonly op: 'changeSuit'; readonly suit: Suit }
+  | { readonly op: 'shiftRank'; readonly delta: number }
+  | { readonly op: 'destroyCards' }
+  | { readonly op: 'duplicateCard' };
+
+/** A single-use card. Bought into the inventory, used later (in the shop or in a round). */
+export interface ConsumableDefinition {
+  readonly id: string;
+  /** Shop price. */
+  readonly cost: number;
+  /**
+   * Cards it asks for. `null` = asks for none, so it can be used in the shop; otherwise it can
+   * only be used during a blind, on cards from the hand.
+   */
+  readonly targets: { readonly min: number; readonly max: number } | null;
+  readonly ops: readonly ConsumableOp[];
+}
+
+/** A consumable held in the inventory. */
+export interface ConsumableInstance {
+  /** Unique within the run ("c1", "c2"…). */
+  readonly instanceId: string;
+  readonly consumableId: string;
+}
+
 export type BlindKind = 'small' | 'big' | 'boss';
 
 /** Boss rule as data. */
@@ -113,5 +142,6 @@ export interface RunContent {
   readonly jokers: readonly JokerDefinition[];
   readonly enhancements: readonly EnhancementDefinition[];
   readonly bosses: readonly BossDefinition[];
+  readonly consumables: readonly ConsumableDefinition[];
   readonly handTypes: Readonly<Record<HandCategory, HandTypeStats>>;
 }
