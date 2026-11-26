@@ -706,12 +706,16 @@ describe('applying and selling consumables', () => {
 
   it('copies the target ids into the consumableUsed event', () => {
     const base = inventory(inBlind(), 'paint_s');
-    const ids = [base.hand[0]!.id];
-    const { events } = act(base, use('c1', ...ids));
+    const id = base.hand[0]!.id;
+    // Build the action once and keep a reference to the very array it carries.
+    const action = use('c1', id);
+    const actionIds = action.type === 'applyConsumable' ? action.cardIds : undefined;
+    if (!actionIds) throw new Error('Expected an action with card ids');
+    const { events } = act(base, action);
     const used = events.find((e) => e.type === 'consumableUsed');
     if (used?.type !== 'consumableUsed') throw new Error('No consumableUsed event');
-    expect(used.cardIds).toEqual(ids);
-    expect(used.cardIds).not.toBe(ids);
+    expect(used.cardIds).toEqual([id]);
+    expect(used.cardIds).not.toBe(actionIds);
   });
 
   describe('destroying and duplicating cards', () => {
