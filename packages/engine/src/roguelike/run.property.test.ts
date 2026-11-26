@@ -31,7 +31,7 @@ const GENTLE: RunConfig = {
  */
 function consumableAction(rng: Rng, state: RunState): RunAction | null {
   const instance = state.consumables[nextInt(rng, state.consumables.length)]!;
-  if (nextInt(rng, 4) === 0) return { type: 'sellConsumable', instanceId: instance.instanceId };
+  if (nextInt(rng, 8) === 0) return { type: 'sellConsumable', instanceId: instance.instanceId };
   const def = DEFAULT_CONTENT.consumables.find((c) => c.id === instance.consumableId)!;
   const cardIds = def.targets
     ? shuffle(rng, state.hand)
@@ -59,8 +59,14 @@ function randomAction(rng: Rng, state: RunState): RunAction {
         ? [i]
         : [],
     );
-    if (roll < 40 && affordable.length > 0)
-      return { type: 'buy', offerIndex: affordable[nextInt(rng, affordable.length)]! };
+    // Card-changing consumables are bought first: their operations need plenty of coverage.
+    const cardChangers = affordable.filter((i) => {
+      const offer = state.shop[i]!;
+      return offer.kind === 'consumable' && ['twin', 'scrap'].includes(offer.consumableId);
+    });
+    const pool = cardChangers.length > 0 && roll < 60 ? cardChangers : affordable;
+    if (roll < 60 && pool.length > 0)
+      return { type: 'buy', offerIndex: pool[nextInt(rng, pool.length)]! };
     if (roll < 50 && state.jokers.length >= 2)
       return { type: 'moveJoker', from: 0, to: state.jokers.length - 1 };
     if (roll < 55 && state.jokers.length > 0)
@@ -71,7 +77,7 @@ function randomAction(rng: Rng, state: RunState): RunAction {
     return { type: 'leaveShop' };
   }
   if (roll > 95) return { type: 'sortHand', by: roll % 2 === 0 ? 'rank' : 'suit' };
-  if (roll > 85 && state.consumables.length > 0) {
+  if (roll > 65 && state.consumables.length > 0) {
     const action = consumableAction(rng, state);
     if (action) return action;
   }
