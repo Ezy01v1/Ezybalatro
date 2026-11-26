@@ -6,8 +6,9 @@
  * - Blind: tries every combination of 1–5 cards in hand, scores it with the engine and plays the best.
  *   If the best hand cannot reach the target in the hands left and there are discards, it discards
  *   the cards that do not score in its best hand (lowest first).
- * - Shop: buys affordable jokers while it has slots, then level-ups for its most played hand type,
- *   keeps $5 of savings for interest when it can, and never rerolls.
+ * - Shop: buys affordable jokers while it has slots, and the study consumable (`study_<type>`) for its
+ *   most played hand type, using it immediately (it ignores every other consumable). It keeps $5 of
+ *   savings for interest when it can, and never rerolls.
  *
  * Usage: node packages/engine/scripts/simulate-balance.mjs [--runs 300] [--seed-prefix sim] [--json]
  * (run `pnpm build:packages` first, or use `pnpm sim:balance` from the root).
@@ -100,11 +101,15 @@ function shop(state, stats) {
     if (offer.kind === 'joker' && state.jokers.length < state.config.jokerSlots) {
       state = act(state, { type: 'buy', offerIndex: i });
     } else if (
-      offer.kind === 'levelUp' &&
-      offer.handType === favorite &&
+      offer.kind === 'consumable' &&
+      offer.consumableId === `study_${favorite}` &&
+      state.consumables.length < state.config.consumableSlots &&
       state.money - offer.price >= 5
     ) {
       state = act(state, { type: 'buy', offerIndex: i });
+      // Studies need no targets: use it right away (the slot is free again for the next offer).
+      const bought = state.consumables[state.consumables.length - 1];
+      state = act(state, { type: 'applyConsumable', instanceId: bought.instanceId });
     }
   }
   return act(state, { type: 'leaveShop' });
