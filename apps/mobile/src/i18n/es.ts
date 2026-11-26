@@ -1,4 +1,4 @@
-import type { HandCategory, Rank, Suit } from '@naipes/engine';
+import { HAND_CATEGORIES, type HandCategory, type Rank, type Suit } from '@naipes/engine';
 
 // Suit characters inside text carry U+FE0E (text presentation): without it Android draws ♥ and ♦
 // with the red color-emoji font. Cards use SVG suits (SuitIcon) instead of text.
@@ -185,19 +185,79 @@ export const es = {
   shop: {
     title: 'Tienda',
     jokers: 'Comodines',
-    consumables: 'Estudios',
+    consumables: 'Consumibles',
     buy: (price: number) => `Comprar $${price}`,
     bought: 'Comprado',
     missing: (n: number) => `Te faltan $${n}`,
     full: 'Comodines llenos',
+    fullConsumables: 'Espacios llenos',
     reroll: (price: number) => `Renovar $${price}`,
     sell: (price: number) => `Vender $${price}`,
     sellConfirm: (price: number) => `Confirmar venta $${price}`,
     next: 'Siguiente ciega',
     nextBoss: (boss: string) => `Siguiente: ${boss}`,
     yourJokers: 'Tus comodines',
+    yourConsumables: 'Tus consumibles',
     levelUp: (hand: string) => `Estudio: ${hand}`,
     levelUpDesc: 'Sube un nivel este tipo de mano (+fichas y +mult).',
+  },
+  consumables: {
+    trayLabel: 'Consumibles',
+    emptySlot: 'Espacio de consumible vacío',
+    emptyShort: 'Vacío',
+    emptyWide: 'Espacio libre',
+    slotHint: 'Toca para ver opciones',
+    slotInactiveHint: 'No disponible mientras se cuenta el puntaje',
+    use: 'Usar',
+    onlyInBlind: 'Elige esto en una ciega',
+    targetsInfo: (min: number, max: number) =>
+      min === max
+        ? `Se usa sobre ${max} ${max === 1 ? 'carta' : 'cartas'} de tu mano.`
+        : `Se usa sobre ${min} a ${max} cartas de tu mano.`,
+    whereAny: 'Se usa en la tienda o en una ciega',
+    whereBlind: 'Se usa durante una ciega',
+    used: (name: string) => `Usaste ${name}`,
+    studyUsed: (hand: string, level: number) => `${hand} sube al nivel ${level}`,
+    sold: (n: number) => `Vendido por $${n}`,
+    targeting: {
+      pick: (min: number, max: number) =>
+        min === max
+          ? `Elige ${max} ${max === 1 ? 'carta' : 'cartas'}`
+          : min === 1
+            ? `Elige hasta ${max} cartas`
+            : `Elige de ${min} a ${max} cartas`,
+      limit: (max: number) => `Solo puedes elegir ${max}`,
+      minHint: (min: number) => `Elige al menos ${min} ${min === 1 ? 'carta' : 'cartas'}`,
+      panelA11y: (name: string, n: number, max: number) =>
+        `Usando ${name}, ${n} de ${max} cartas elegidas`,
+      apply: 'Aplicar',
+      cancel: 'Cancelar',
+      destroyWarning: 'Se destruyen para siempre.',
+      confirmDestroy: 'Confirmar: destruir',
+    },
+    errors: {
+      noSlot: 'No hay espacio para otro consumible',
+      pickBetween: (min: number, max: number) =>
+        min === max
+          ? `Elige ${max} ${max === 1 ? 'carta' : 'cartas'}`
+          : `Elige entre ${min} y ${max} cartas`,
+      invalidCards: 'Esas cartas no sirven para esto. Prueba con otras.',
+      elevateAce: 'El As ya no puede subir.',
+      scrapMin: (n: number) => `Tu mazo no puede tener menos de ${n} cartas.`,
+      invalidConsumable: 'Ese consumible ya no está disponible.',
+      invalidPhase: 'Elige esto en una ciega',
+      generic: 'No se pudo usar. Inténtalo de nuevo.',
+    },
+    deck: {
+      title: 'Tu mazo',
+      open: 'Ver mazo',
+      openA11y: (n: number) => `Ver mazo, ${n} cartas`,
+      total: (n: number) => `${n} cartas`,
+      drawLeft: (n: number) => `${n} por robar`,
+      emptySuit: 'Sin cartas',
+      legend: 'Etiqueta rellena: actúa al puntuar. Con contorno: actúa en tu mano.',
+      suitA11y: (suit: string, n: number, list: string) => `${suit}: ${n} cartas. ${list}`,
+    },
   },
   runOver: {
     won: '¡Run ganada!',
@@ -344,6 +404,135 @@ export const JOKER_TEXTS: Record<string, { name: string; short: string; descript
     name: 'Propina',
     short: '+$1/mano',
     description: '+$1 por cada mano sobrante al superar una ciega.',
+  },
+};
+
+/** Card enhancement labels (ids come from the engine content). `short` is the 3-letter badge. */
+export const ENHANCEMENT_TEXTS: Record<
+  string,
+  { name: string; short: string; description: string; timing: 'scored' | 'held' }
+> = {
+  reinforced: {
+    name: 'Reforzada',
+    short: 'Ref',
+    timing: 'scored',
+    description: '+25 fichas al puntuar.',
+  },
+  anchor: {
+    name: 'Ancla',
+    short: 'Anc',
+    timing: 'held',
+    description: '×1,5 mult mientras se queda en tu mano.',
+  },
+  charged: { name: 'Cargada', short: 'Car', timing: 'scored', description: '+4 mult al puntuar.' },
+  gilded: { name: 'Dorada', short: 'Dor', timing: 'scored', description: '+$2 al puntuar.' },
+  heavy: {
+    name: 'Pesada',
+    short: 'Pes',
+    timing: 'held',
+    description: '+30 fichas mientras se queda en tu mano.',
+  },
+  volatile: {
+    name: 'Volátil',
+    short: 'Vol',
+    timing: 'scored',
+    description: '×1,3 mult al puntuar.',
+  },
+};
+
+/** Consumable names and effects (ids come from the engine content). `kind` groups them in the sheet. */
+export const CONSUMABLE_TEXTS: Record<
+  string,
+  { name: string; kind: string; short: string; description: string }
+> = {
+  ...Object.fromEntries(
+    HAND_CATEGORIES.map((hand) => [
+      `study_${hand}`,
+      {
+        name: `Estudio: ${HAND_NAMES[hand]}`,
+        kind: 'Estudio',
+        short: hand === 'straight_flush' ? 'Esc. color' : HAND_NAMES[hand],
+        description: `Sube un nivel la mano ${HAND_NAMES[hand]}: más fichas y más mult.`,
+      },
+    ]),
+  ),
+  reinforce: {
+    name: 'Refuerzo',
+    kind: 'Mejora',
+    short: 'Reforzada',
+    description: 'Da «Reforzada» a 1 o 2 cartas: +25 fichas al puntuar.',
+  },
+  charge: {
+    name: 'Carga',
+    kind: 'Mejora',
+    short: 'Cargada',
+    description: 'Da «Cargada» a 1 o 2 cartas: +4 mult al puntuar.',
+  },
+  gild: {
+    name: 'Dorado',
+    kind: 'Mejora',
+    short: 'Dorada',
+    description: 'Da «Dorada» a 1 o 2 cartas: +$2 al puntuar.',
+  },
+  weigh: {
+    name: 'Lastre',
+    kind: 'Mejora',
+    short: 'Pesada',
+    description: 'Da «Pesada» a 1 o 2 cartas: +30 fichas si se quedan en tu mano.',
+  },
+  anchor_card: {
+    name: 'Anclaje',
+    kind: 'Mejora',
+    short: 'Ancla',
+    description: 'Da «Ancla» a 1 o 2 cartas: ×1,5 mult si se quedan en tu mano.',
+  },
+  volatilize: {
+    name: 'Volatilizar',
+    kind: 'Mejora',
+    short: 'Volátil',
+    description: 'Da «Volátil» a 1 o 2 cartas: ×1,3 mult al puntuar.',
+  },
+  paint_s: {
+    name: 'Tinta de Picas',
+    kind: 'Tinta',
+    short: 'Picas',
+    description: 'Convierte de 1 a 3 cartas en picas.',
+  },
+  paint_h: {
+    name: 'Tinta de Corazones',
+    kind: 'Tinta',
+    short: 'Corazones',
+    description: 'Convierte de 1 a 3 cartas en corazones.',
+  },
+  paint_d: {
+    name: 'Tinta de Diamantes',
+    kind: 'Tinta',
+    short: 'Diamantes',
+    description: 'Convierte de 1 a 3 cartas en diamantes.',
+  },
+  paint_c: {
+    name: 'Tinta de Tréboles',
+    kind: 'Tinta',
+    short: 'Tréboles',
+    description: 'Convierte de 1 a 3 cartas en tréboles.',
+  },
+  elevate: {
+    name: 'Ascenso',
+    kind: 'Ascenso',
+    short: '+1 valor',
+    description: 'Sube 1 valor a 1 o 2 cartas (un 9 pasa a 10). El As no sube.',
+  },
+  scrap: {
+    name: 'Chatarra',
+    kind: 'Chatarra',
+    short: 'Destruir',
+    description: 'Destruye 1 o 2 cartas de tu mazo para siempre.',
+  },
+  twin: {
+    name: 'Gemelo',
+    kind: 'Gemelo',
+    short: 'Copiar',
+    description: 'Añade a tu mazo una copia de 1 carta, con su mejora.',
   },
 };
 
