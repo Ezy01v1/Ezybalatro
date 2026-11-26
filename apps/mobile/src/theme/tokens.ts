@@ -70,6 +70,10 @@ export const layout = {
   card: { width: 60, height: 84, maxWidth: 72, minVisible: 38, lift: 16 },
   jokerSlot: { width: 58, height: 80 },
   actionBarHeight: 56,
+  /** Consumable tickets: compact (blind tool row) and wide (shop). Height = touch target. */
+  consumableSlot: { minWidth: 56, height: 48, heightWide: 56 },
+  /** Tile of a card in the deck viewer. */
+  deckTile: { width: 36, height: 50 },
   /** Cards and other fixed-size boxes cap text scaling so they do not overflow. */
   fixedBoxFontScale: 1.2,
 } as const;
@@ -86,6 +90,8 @@ export const motion = {
   stagger: { deal: 40, play: 50, discard: 30 },
   /** The scoring playback never takes longer than this; steps get shorter instead. */
   maxScoringMs: 2500,
+  /** How long a transient notice ("Vendido por $1") stays on screen. */
+  noticeMs: 2500,
   // Table mode (docs/design/fase4-mesa-diseno.md §3).
   dealStaggerMs: 60,
   dealMs: 220,

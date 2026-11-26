@@ -198,8 +198,6 @@ export const es = {
     nextBoss: (boss: string) => `Siguiente: ${boss}`,
     yourJokers: 'Tus comodines',
     yourConsumables: 'Tus consumibles',
-    levelUp: (hand: string) => `Estudio: ${hand}`,
-    levelUpDesc: 'Sube un nivel este tipo de mano (+fichas y +mult).',
   },
   consumables: {
     trayLabel: 'Consumibles',

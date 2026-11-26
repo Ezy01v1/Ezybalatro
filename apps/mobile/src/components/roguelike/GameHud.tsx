@@ -1,14 +1,16 @@
-import type { BlindKind, HandCategory } from '@naipes/engine';
+import { findConsumable, type BlindKind, type HandCategory } from '@naipes/engine';
 import { useEffect } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, {
+  FadeIn,
+  FadeInDown,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
 import { formatMoney, formatMult, formatNumber } from '@/game/format';
-import { BOSS_TEXTS, es, HAND_NAMES } from '@/i18n/es';
+import { BOSS_TEXTS, CONSUMABLE_TEXTS, es, HAND_NAMES } from '@/i18n/es';
 import { colors, layout, motion, radii, spacing } from '@/theme/tokens';
 import { Button, Text } from '@/ui/primitives';
 
@@ -195,7 +197,122 @@ export function ActionBar({
   );
 }
 
+/**
+ * Replaces the hand preview while the player picks the cards for a consumable: names the
+ * consumable and says how many cards to choose. A frame of its own so it cannot be mistaken
+ * for the normal play zone.
+ */
+export function TargetingPanel({
+  consumableId,
+  count,
+  error,
+  limitHit,
+}: {
+  consumableId: string;
+  count: number;
+  /** Engine error text for the last Aplicar; shown until the selection changes. */
+  error?: string | null;
+  /** The player just tried to pick one card more than allowed. */
+  limitHit?: boolean;
+}) {
+  const reduced = useReducedMotion();
+  const def = findConsumable(consumableId);
+  const name = CONSUMABLE_TEXTS[consumableId]?.name ?? consumableId;
+  const { min, max } = def?.targets ?? { min: 0, max: 0 };
+  const destroys = !!def?.ops.some((op) => op.op === 'destroyCards');
+  return (
+    <Animated.View
+      entering={
+        reduced ? FadeIn.duration(motion.duration.fast) : FadeInDown.duration(motion.duration.base)
+      }
+      style={styles.panel}
+      accessible
+      accessibilityLabel={es.consumables.targeting.panelA11y(name, count, max)}
+      testID="targeting-panel"
+    >
+      <Text variant="title" numberOfLines={1}>
+        {name}
+      </Text>
+      <Text
+        variant="body"
+        tone={error ? 'danger' : limitHit ? 'mult' : 'fg'}
+        accessibilityLiveRegion="polite"
+        testID="targeting-hint"
+      >
+        {error ??
+          (limitHit
+            ? es.consumables.targeting.limit(max)
+            : es.consumables.targeting.pick(min, max))}
+      </Text>
+      {destroys ? (
+        <Text variant="caption" tone="danger">
+          {es.consumables.targeting.destroyWarning}
+        </Text>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+/** Replaces Descartar / Jugar mano while picking cards: the hand cannot be played by mistake. */
+export function TargetingBar({
+  count,
+  min,
+  max,
+  confirming,
+  onApply,
+  onCancel,
+}: {
+  count: number;
+  min: number;
+  max: number;
+  /** Destroying cards asks for a second tap: the label changes while armed. */
+  confirming?: boolean;
+  onApply: () => void;
+  onCancel: () => void;
+}) {
+  const reduced = useReducedMotion();
+  const ready = count >= min;
+  return (
+    <Animated.View
+      entering={FadeIn.duration(reduced ? motion.duration.fast : motion.duration.base)}
+      style={styles.actions}
+      testID="targeting-bar"
+    >
+      <Button
+        testID="targeting-cancel"
+        variant="secondary"
+        label={es.consumables.targeting.cancel}
+        onPress={onCancel}
+        style={styles.cancel}
+      />
+      <Button
+        testID="targeting-apply"
+        label={
+          confirming ? es.consumables.targeting.confirmDestroy : es.consumables.targeting.apply
+        }
+        detail={confirming ? undefined : `${count}/${max}`}
+        accessibilityHint={ready ? undefined : es.consumables.targeting.minHint(min)}
+        inactive={!ready}
+        onPress={ready ? onApply : undefined}
+        style={styles.apply}
+      />
+    </Animated.View>
+  );
+}
+
 const styles = StyleSheet.create({
+  panel: {
+    alignSelf: 'stretch',
+    marginHorizontal: layout.gutter,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    gap: spacing.xs,
+  },
+  cancel: { flex: 2, minHeight: layout.actionBarHeight },
+  apply: { flex: 3, minHeight: layout.actionBarHeight },
   blindBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',

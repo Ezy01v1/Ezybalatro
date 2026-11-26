@@ -1,13 +1,17 @@
-import { jokerSellValue, type RunState, type ShopOffer } from '@naipes/engine';
+import { findConsumable, jokerSellValue, type RunState, type ShopOffer } from '@naipes/engine';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { playSound } from '@/feedback/feedback';
 import { formatMoney } from '@/game/format';
 import { useGame } from '@/game/store';
-import { BOSS_TEXTS, es, JOKER_TEXTS } from '@/i18n/es';
+import { BOSS_TEXTS, CONSUMABLE_TEXTS, es, JOKER_TEXTS } from '@/i18n/es';
 import { colors, layout, radii, spacing } from '@/theme/tokens';
+import { Notice } from '@/ui/Notice';
 import { Button, DecoRule, Screen, Text } from '@/ui/primitives';
 import { useArmed } from '@/ui/useArmed';
+import { useTransientNotice } from '@/ui/useTransientNotice';
+import { ConsumableSheet } from './ConsumableSheet';
+import { ConsumableTray } from './ConsumableTray';
 import { JokerDetailSheet } from './JokerDetailSheet';
 import { JokerRail } from './JokerRail';
 
@@ -22,30 +26,41 @@ function OfferCard({
   run: RunState;
   onBuy: (index: number) => void;
 }) {
-  // Minimal consumable branch; the full consumable shop UI comes later.
-  const title =
+  const text =
     offer.kind === 'joker'
-      ? (JOKER_TEXTS[offer.jokerId]?.name ?? offer.jokerId)
-      : offer.consumableId;
-  const description = offer.kind === 'joker' ? (JOKER_TEXTS[offer.jokerId]?.description ?? '') : '';
+      ? (JOKER_TEXTS[offer.jokerId] ?? { name: offer.jokerId, description: '' })
+      : (CONSUMABLE_TEXTS[offer.consumableId] ?? { name: offer.consumableId, description: '' });
+  // Consumables that ask for cards can only be used in a blind: say so before buying.
+  const where =
+    offer.kind === 'consumable'
+      ? findConsumable(offer.consumableId)?.targets
+        ? es.consumables.whereBlind
+        : es.consumables.whereAny
+      : null;
   const missing = offer.price - run.money;
   const full =
     offer.kind === 'joker'
       ? run.jokers.length >= run.config.jokerSlots
       : run.consumables.length >= run.config.consumableSlots;
+  const fullText = offer.kind === 'joker' ? es.shop.full : es.shop.fullConsumables;
   const status = offer.sold
     ? es.shop.bought
     : full
-      ? es.shop.full
+      ? fullText
       : missing > 0
         ? es.shop.missing(missing)
         : null;
   return (
     <View style={[styles.offer, offer.sold && styles.offerSold]} testID={`offer-${index}`}>
-      <Text variant="subtitle">{title}</Text>
+      <Text variant="subtitle">{text.name}</Text>
       <Text variant="caption" tone="muted">
-        {description}
+        {text.description}
       </Text>
+      {where ? (
+        <Text variant="caption" tone="muted">
+          {where}
+        </Text>
+      ) : null}
       <View style={styles.offerFooter}>
         <Text
           variant="caption"
@@ -75,10 +90,28 @@ export function ShopScreen({ run }: { run: RunState }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = run.jokers.find((j) => j.instanceId === detailId) ?? null;
   const [armedSell, setArmedSell] = useArmed<string>();
+  const [consumableId, setConsumableId] = useState<string | null>(null);
+  const [notice, showNotice] = useTransientNotice();
 
   const onBuy = (index: number) => {
-    if (buy(index) === null) playSound('coin');
+    const code = buy(index);
+    if (code === null) playSound('coin');
+    else if (code === 'NO_CONSUMABLE_SLOT') showNotice(es.consumables.errors.noSlot);
   };
+  // Grouped on screen; the index (and test ids) stay the position in run.shop.
+  const offers = run.shop.map((offer, index) => ({ offer, index }));
+  const jokerOffers = offers.filter((o) => o.offer.kind === 'joker');
+  const consumableOffers = offers.filter((o) => o.offer.kind === 'consumable');
+  const renderOffers = (list: typeof offers) =>
+    list.map(({ offer, index }) => (
+      <OfferCard
+        key={`${index}-${offer.kind === 'joker' ? offer.jokerId : offer.consumableId}`}
+        offer={offer}
+        index={index}
+        run={run}
+        onBuy={onBuy}
+      />
+    ));
   const nextLabel =
     run.blind === 'boss' ? es.shop.nextBoss(BOSS_TEXTS[run.bossId]?.name ?? '') : es.shop.next;
 
@@ -104,17 +137,26 @@ export function ShopScreen({ run }: { run: RunState }) {
           onMove={moveJoker}
         />
         <Text variant="caption" tone="muted">
-          {es.shop.jokers} · {es.shop.consumables}
+          {es.shop.yourConsumables}
         </Text>
-        {run.shop.map((offer, index) => (
-          <OfferCard
-            key={`${index}-${offer.kind === 'joker' ? offer.jokerId : offer.consumableId}`}
-            offer={offer}
-            index={index}
-            run={run}
-            onBuy={onBuy}
-          />
-        ))}
+        <ConsumableTray run={run} variant="wide" onPress={setConsumableId} />
+        <View style={styles.noticeSlot}>{notice ? <Notice message={notice} /> : null}</View>
+        {jokerOffers.length > 0 ? (
+          <>
+            <Text variant="caption" tone="muted">
+              {es.shop.jokers}
+            </Text>
+            {renderOffers(jokerOffers)}
+          </>
+        ) : null}
+        {consumableOffers.length > 0 ? (
+          <>
+            <Text variant="caption" tone="muted">
+              {es.shop.consumables}
+            </Text>
+            {renderOffers(consumableOffers)}
+          </>
+        ) : null}
         <Button
           testID="reroll-button"
           variant="secondary"
@@ -131,6 +173,12 @@ export function ShopScreen({ run }: { run: RunState }) {
           style={styles.next}
         />
       </View>
+      <ConsumableSheet
+        run={run}
+        instanceId={consumableId}
+        onClose={() => setConsumableId(null)}
+        onUsed={showNotice}
+      />
       <JokerDetailSheet
         joker={detail}
         onClose={() => {
@@ -179,6 +227,8 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   offerSold: { opacity: 0.55 },
+  // Reserved so the notice never makes the offers jump.
+  noticeSlot: { minHeight: spacing.xl, justifyContent: 'center' },
   offerFooter: {
     flexDirection: 'row',
     alignItems: 'center',

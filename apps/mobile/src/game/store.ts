@@ -237,8 +237,10 @@ export const useGame = create<GameStore>((set, get) => {
     },
 
     applyConsumable(instanceId) {
-      const { run, selected, targeting } = get();
+      const { run, selected, targeting, playback } = get();
       if (!run) return 'RUN_OVER';
+      // The hand on screen is still being counted: the run already holds its result.
+      if (playback) return 'INVALID_PHASE';
       const cardIds =
         targeting?.instanceId === instanceId
           ? run.hand.filter((c) => selected.includes(c.id)).map((c) => c.id)
@@ -251,6 +253,7 @@ export const useGame = create<GameStore>((set, get) => {
     },
 
     sellConsumable(instanceId) {
+      if (get().playback) return;
       if (!dispatch({ type: 'sellConsumable', instanceId }).ok) return;
       if (get().targeting?.instanceId === instanceId) set({ targeting: null, selected: [] });
     },

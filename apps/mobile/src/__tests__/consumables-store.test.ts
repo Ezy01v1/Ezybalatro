@@ -82,6 +82,32 @@ describe('consumables in the game store', () => {
     if (saved.status === 'ok') expect(saved.run).toEqual(run);
   });
 
+  it('a failed apply with cards selected keeps the selection and the mode', () => {
+    // Elevate cannot raise an ace.
+    const start = setup('elevate');
+    const ace = { ...start.hand[0]!, rank: 14 as const };
+    useGame.setState({ run: { ...start, hand: [ace, ...start.hand.slice(1)] } });
+    const before = useGame.getState().run!;
+    useGame.getState().beginTargeting('c1');
+    useGame.getState().toggleCard(ace.id);
+    expect(useGame.getState().applyConsumable('c1')).toBe('INVALID_CARDS');
+    expect(useGame.getState().selected).toEqual([ace.id]);
+    expect(useGame.getState().targeting).toEqual({ instanceId: 'c1' });
+    expect(useGame.getState().run).toBe(before);
+  });
+
+  it('applyConsumable and sellConsumable do nothing while a hand is being scored', () => {
+    const before = setup('study_pair', 'twin');
+    useGame.getState().toggleCard(before.hand[0]!.id);
+    useGame.getState().play();
+    expect(useGame.getState().playback).not.toBeNull();
+    const during = useGame.getState().run!;
+    expect(useGame.getState().applyConsumable('c1')).toBe('INVALID_PHASE');
+    useGame.getState().sellConsumable('c2');
+    expect(useGame.getState().run).toBe(during);
+    expect(useGame.getState().run!.consumables).toHaveLength(2);
+  });
+
   it('sends the selected cards in hand order, not tapping order', () => {
     const before = setup('reinforce');
     const [a, b] = [before.hand[0]!, before.hand[1]!];
