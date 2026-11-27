@@ -1394,9 +1394,11 @@ describe('packs', () => {
       ...withPack('pack_joker'),
       jokers: DEFAULT_CONTENT.jokers.slice(0, 2),
     };
-    const state = shopWith(two);
+    // No jokers on sale (they would be left out of the pack), so both catalog jokers are candidates.
+    const state = shopWith(two, { shopJokerOffers: 0 });
+    const twoPackIndex = state.shop.findIndex((o) => o.kind === 'pack');
     expect(
-      act(state, { type: 'buy', offerIndex: PACK_INDEX }, two).state.openPack!.items,
+      act(state, { type: 'buy', offerIndex: twoPackIndex }, two).state.openPack!.items,
     ).toHaveLength(2);
 
     const one: RunContent = {
@@ -1433,5 +1435,18 @@ describe('packs', () => {
     const again = replayRun({ seed: 'packs', config, actions }, content).state;
     expect(once).toEqual(again);
     expect(once.deck).toHaveLength(53);
+  });
+
+  it('joker packs never offer a joker that is on sale in the shop, so no joker is owned twice', () => {
+    for (let n = 0; n < 40; n++) {
+      const content = withPack('pack_joker');
+      const config = { ...EASY, startingMoney: 100 };
+      const created = createRun(`dupes-${n}`, config, content).state;
+      const shop = playFirst(created, 1, content).state;
+      const onSale = shop.shop.flatMap((o) => (o.kind === 'joker' && !o.sold ? [o.jokerId] : []));
+      const opened = act(shop, { type: 'buy', offerIndex: PACK_INDEX }, content).state.openPack!;
+      const offered = opened.items.map((i) => (i.kind === 'joker' ? i.jokerId : ''));
+      expect(offered.filter((id) => onSale.includes(id))).toEqual([]);
+    }
   });
 });

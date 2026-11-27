@@ -756,8 +756,12 @@ function rollPackItems(d: Draft, pack: PackDefinition, content: RunContent): Pac
   let items: PackItem[];
   switch (pack.kind) {
     case 'joker': {
-      const owned = new Set(d.jokers.map((j) => j.jokerId));
-      const pool = content.jokers.filter((j) => !owned.has(j.id));
+      // Not owned and not on sale in the shop either: buying a joker the pack also offered
+      // would own it twice.
+      const taken = new Set(d.jokers.map((j) => j.jokerId));
+      for (const offer of d.shop)
+        if (offer.kind === 'joker' && !offer.sold) taken.add(offer.jokerId);
+      const pool = content.jokers.filter((j) => !taken.has(j.id));
       items = drawDistinct(rng, pool, pack.size).map((j) => ({ kind: 'joker', jokerId: j.id }));
       break;
     }

@@ -183,4 +183,32 @@ describe('the pack sheet', () => {
     expect(screen.getByText(es.packs.pick(2, 1))).toBeTruthy();
     expect(screen.getByText(es.packs.taken)).toBeTruthy();
   });
+
+  it('does not carry an armed skip over to the next pack of the same visit', async () => {
+    reachShopWithPack(jokerPack());
+    await render(<ConnectedShop />);
+    await press('pack-skip');
+    expect(screen.getByText(es.packs.skipConfirm)).toBeTruthy();
+    await press('pack-item-0');
+    expect(useGame.getState().run!.openPack).toBeNull();
+    await act(async () => {
+      useGame.setState({ run: { ...useGame.getState().run!, openPack: jokerPack() } });
+    });
+    expect(screen.getByText(es.packs.skip)).toBeTruthy();
+    expect(screen.queryByText(es.packs.skipConfirm)).toBeNull();
+  });
+
+  it('does not carry an error over to the next pack of the same visit', async () => {
+    reachShopWithPack(jokerPack(), { config: { ...EASY, jokerSlots: 0 } });
+    await render(<ConnectedShop />);
+    await press('pack-item-0');
+    expect(screen.getByTestId('pack-error')).toHaveTextContent(es.packs.errors.noJokerSlot);
+    await press('pack-skip');
+    await press('pack-skip');
+    expect(useGame.getState().run!.openPack).toBeNull();
+    await act(async () => {
+      useGame.setState({ run: { ...useGame.getState().run!, openPack: jokerPack() } });
+    });
+    expect(screen.getByTestId('pack-error')).not.toHaveTextContent(es.packs.errors.noJokerSlot);
+  });
 });

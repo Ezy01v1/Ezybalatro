@@ -142,6 +142,7 @@ function playRandomRun(seed: string, config: RunConfig, saveLoadAt: number) {
     expect(state.hand.length).toBeLessThanOrEqual(config.handSize + state.nextCardNumber - 1);
     expect(state.consumables.length).toBeLessThanOrEqual(state.config.consumableSlots);
     expect(state.jokers.length).toBeLessThanOrEqual(state.config.jokerSlots);
+    expect(new Set(state.jokers.map((j) => j.jokerId)).size).toBe(state.jokers.length);
     expect(state.openPack === null || state.phase === 'shop').toBe(true);
     expect(new Set(state.vouchers).size).toBe(state.vouchers.length);
     expect(new Set(state.consumables.map((c) => c.instanceId)).size).toBe(state.consumables.length);

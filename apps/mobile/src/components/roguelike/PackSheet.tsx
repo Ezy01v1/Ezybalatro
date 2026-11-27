@@ -122,13 +122,23 @@ export function PackSheet({
   run: RunState;
   onPicked: (message: string) => void;
 }) {
+  // The body (and its error and armed-skip state) unmounts when the pack closes, so the next
+  // pack of the same shop visit starts clean.
+  return run.openPack ? <PackSheetBody open={run.openPack} onPicked={onPicked} /> : null;
+}
+
+function PackSheetBody({
+  open,
+  onPicked,
+}: {
+  open: OpenPack;
+  onPicked: (message: string) => void;
+}) {
   const pickFromPack = useGame((s) => s.pickFromPack);
   const skipPack = useGame((s) => s.skipPack);
   const { height } = useWindowDimensions();
   const [error, setError] = useState<{ index: number; message: string } | null>(null);
   const [armedSkip, setArmedSkip] = useArmed();
-  const open = run.openPack;
-  if (!open) return null;
 
   // Every pick takes one option, so the picks made plus the picks left is the pack's total.
   const picked = open.items.filter((item) => item.taken).length;
