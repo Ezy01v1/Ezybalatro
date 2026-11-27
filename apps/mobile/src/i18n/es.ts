@@ -206,6 +206,34 @@ export const es = {
     nextBoss: (boss: string) => `Siguiente: ${boss}`,
     yourJokers: 'Tus comodines',
     yourConsumables: 'Tus consumibles',
+    packs: 'Sobres · se abren al comprarlos',
+    voucher: 'Vale · mejora permanente',
+    vouchersOwned: (n: number) => `Tus vales · ${n}`,
+    packPick: (size: number, picks: number) => `Elige ${picks} de ${size}`,
+    priceVerb: 'Comprar',
+    buyA11y: (name: string, price: number) => `Comprar ${name} por $${price}`,
+    noJokerSlot: 'Sin espacio: vende un comodín',
+    noConsumableSlot: 'Sin espacio: usa o vende un consumible',
+    rerollScope: 'Solo cambia comodines y consumibles',
+    voucherBought: (short: string) => `Vale comprado: ${short}`,
+  },
+  packs: {
+    pick: (n: number, left: number) => (n === left ? `Elige ${n}` : `Elige ${n} (quedan ${left})`),
+    cardNote: 'Las cartas que elijas se añaden a tu mazo.',
+    taken: 'Elegido',
+    pickHint: 'Toca para elegir',
+    skip: 'Saltar sobre',
+    skipConfirm: 'Confirmar: saltar sin elegir',
+    skipRest: 'Saltar el resto',
+    added: (name: string) => `Añadido: ${name}`,
+    cardAdded: (label: string) => `Se añadió a tu mazo: ${label}`,
+    cardItem: (rank: string, suit: string) => `${rank} de ${suit}`,
+    errors: {
+      noJokerSlot: 'Ya no tienes espacio para otro comodín. Puedes saltar el resto del sobre.',
+      noConsumableSlot:
+        'Ya no tienes espacio para otro consumible. Puedes saltar el resto del sobre.',
+      generic: 'No se pudo elegir. Inténtalo de nuevo.',
+    },
   },
   consumables: {
     trayLabel: 'Consumibles',
@@ -541,4 +569,51 @@ export const BOSS_TEXTS: Record<string, { name: string; rule: string }> = {
   clock: { name: 'El Reloj', rule: 'Una mano menos, un descarte más' },
   press: { name: 'La Prensa', rule: 'Una carta menos en la mano' },
   mask: { name: 'La Máscara', rule: 'Las figuras (J, Q, K) no puntúan' },
+};
+
+/** Pack names and descriptions (ids come from the engine content). */
+export const PACK_TEXTS: Record<string, { name: string; description: string }> = {
+  pack_joker: { name: 'Sobre de comodines', description: 'Comodines nuevos para tu run.' },
+  pack_consumable: {
+    name: 'Sobre de consumibles',
+    description: 'Estudios, mejoras y más para tu inventario.',
+  },
+  pack_card: {
+    name: 'Sobre de cartas',
+    description: 'Cartas con mejora que se suman a tu mazo.',
+  },
+};
+
+/** Voucher names, short effects (for the owned-vouchers pills) and descriptions. */
+export const VOUCHER_TEXTS: Record<string, { name: string; short: string; description: string }> = {
+  extra_hand: {
+    name: 'Mano de gracia',
+    short: '+1 mano',
+    description: 'Una mano más en cada ciega, desde la siguiente.',
+  },
+  extra_discard: {
+    name: 'Descarte de cortesía',
+    short: '+1 descarte',
+    description: 'Un descarte más en cada ciega, desde la siguiente.',
+  },
+  joker_slot: {
+    name: 'Palco ampliado',
+    short: '+1 espacio de comodín',
+    description: 'Un espacio más para tus comodines.',
+  },
+  consumable_slot: {
+    name: 'Bolsillo del chaleco',
+    short: '+1 espacio de consumible',
+    description: 'Un espacio más para tus consumibles.',
+  },
+  cheap_reroll: {
+    name: 'Propina al crupier',
+    short: 'Renovar −$1',
+    description: 'Renovar la tienda cuesta $1 menos (mínimo $0).',
+  },
+  interest_cap: {
+    name: 'Caja fuerte',
+    short: 'Interés máx. +$1',
+    description: 'Tu interés máximo por ronda sube $1.',
+  },
 };
