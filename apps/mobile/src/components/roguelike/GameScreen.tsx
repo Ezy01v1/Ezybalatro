@@ -167,6 +167,9 @@ export function GameScreen({ run }: { run: RunState }) {
           onPress={view ? view.skip : undefined}
           accessibilityHint={view ? es.game.skip : undefined}
           disabled={!view}
+          // Only a stop for the screen reader while skipping is possible: otherwise it would
+          // merge its children (hand preview, targeting hint) into one silent node.
+          accessible={!!view}
         >
           {playback && view ? (
             <>

@@ -226,11 +226,14 @@ export function TargetingPanel({
         reduced ? FadeIn.duration(motion.duration.fast) : FadeInDown.duration(motion.duration.base)
       }
       style={styles.panel}
-      accessible
-      accessibilityLabel={es.consumables.targeting.panelA11y(name, count, max)}
       testID="targeting-panel"
     >
-      <Text variant="title" numberOfLines={1}>
+      {/* Not one merged node: the hint below is a live region and must be announced by itself. */}
+      <Text
+        variant="title"
+        numberOfLines={1}
+        accessibilityLabel={es.consumables.targeting.panelA11y(name, count, max)}
+      >
         {name}
       </Text>
       <Text

@@ -76,6 +76,16 @@ const offer = (consumableId: string, price = 3): ShopOffer => ({
 /** `toHaveTextContent` with a string needs the whole text: this matches a part of it. */
 const contains = (text: string) => new RegExp(text.replace(/[$^.*+?()[\]{}|\\]/g, '\\$&'));
 
+/**
+ * A screen reader merges everything inside an `accessible` node into that node's own label, so
+ * text there is only announced if it is in the label. This is true when no ancestor merges it.
+ */
+const isSeparatelyAnnounced = (element: ReturnType<typeof screen.getByTestId>) => {
+  for (let node = element.parent; node; node = node.parent)
+    if (typeof node.type === 'string' && node.props.accessible === true) return false;
+  return true;
+};
+
 const press = async (testID: string) => fireEvent.press(screen.getByTestId(testID));
 const inactive = (testID: string) =>
   screen.getByTestId(testID).props.accessibilityState.disabled === true;
@@ -261,6 +271,9 @@ describe('blind: card-picking mode', () => {
     expect(screen.getByTestId('targeting-hint')).toHaveTextContent(
       contains('Solo puedes elegir 3'),
     );
+    // The live region must not be swallowed by an accessible parent, or TalkBack never says it.
+    expect(isSeparatelyAnnounced(screen.getByTestId('targeting-hint'))).toBe(true);
+    expect(screen.getByTestId('targeting-hint').props.accessibilityLiveRegion).toBe('polite');
 
     // The hint goes back to the instruction after a moment.
     await act(async () => {
@@ -347,6 +360,10 @@ describe('blind: card-picking mode', () => {
     expect(screen.getByTestId('targeting-hint')).toHaveTextContent(
       contains('El As ya no puede subir.'),
     );
+    expect(isSeparatelyAnnounced(screen.getByTestId('targeting-hint'))).toBe(true);
+    expect(screen.getByTestId('targeting-hint').props.accessibilityLiveRegion).toBe('polite');
+    // The panel still tells the screen reader what is being used and how many cards are chosen.
+    expect(screen.getByLabelText(contains('Usando Ascenso, 1 de 2 cartas elegidas'))).toBeTruthy();
     expect(useGame.getState().targeting).toEqual({ instanceId: 'c1' });
     expect(useGame.getState().selected).toEqual([withAce.id]);
     expect(useGame.getState().run!.consumables).toHaveLength(1);
