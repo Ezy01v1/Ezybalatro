@@ -1,3 +1,4 @@
+import { nextInt, type Rng } from '../rng';
 import { evaluatePlayedHand } from '../hands/played-hand';
 import type { HandCategory } from '../hands/hand-category';
 import { CARD_CHIPS, DEFAULT_CONTENT } from './content';
@@ -44,6 +45,8 @@ export interface ScoreInput {
   readonly money: number;
   /** Boss rule: debuffed cards still count for the hand type but add nothing and trigger nothing. */
   readonly isDebuffed?: (card: RunCard) => boolean;
+  /** Generator for luck (`ctx.roll`). Without one, every roll fails. */
+  readonly rng?: Rng;
 }
 
 export interface ScoreResult {
@@ -100,6 +103,11 @@ export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTE
     { source: { kind: 'base', handType, level }, effect: { chips, mult }, chips, mult },
   ];
 
+  const roll = (n: number, d: number): boolean => {
+    if (!(n > 0) || !Number.isInteger(d) || d <= 0 || !input.rng) return false;
+    if (n >= d) return true;
+    return nextInt(input.rng, d) < n;
+  };
   const ctx = (): HandContext => ({
     handType,
     played: input.played,
@@ -110,6 +118,7 @@ export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTE
     handsLeft: input.handsLeft ?? 0,
     discardsLeft: input.discardsLeft ?? 0,
     money: input.money + money,
+    roll,
   });
   const apply = (source: ScoreSource, effect: Effect | undefined) => {
     if (!effect) return;

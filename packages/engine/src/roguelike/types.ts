@@ -39,6 +39,12 @@ export interface HandContext {
   readonly handsLeft: number;
   readonly discardsLeft: number;
   readonly money: number;
+  /**
+   * Luck: true with probability n / d, drawn from the run's score stream in evaluation order.
+   * Always false when `n <= 0`, `d` is not a positive integer, or the hand is scored without a
+   * generator; always true (drawing nothing) when `n >= d`.
+   */
+  roll(n: number, d: number): boolean;
 }
 
 export interface DiscardContext {

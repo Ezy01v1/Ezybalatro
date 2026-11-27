@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CONTENT,
+  SeededRng,
   HAND_CATEGORIES,
   parseCards,
   scoreHand,
@@ -8,6 +9,8 @@ import {
   type JokerDefinition,
   type JokerInstance,
   type RunCard,
+  type RunContent,
+  type Rng,
   type ScoreInput,
 } from '../index';
 
@@ -223,5 +226,102 @@ describe('scoreHand: card enhancements', () => {
     });
     expect(result.mult).toBeCloseTo(2.6);
     expect(result.score).toBe(67);
+  });
+});
+
+/** A joker that rolls `roll(n, d)` once per hand and adds +100 mult when it hits. */
+const roller = (id: string, n: number, d: number): JokerDefinition => ({
+  id,
+  rarity: 'common',
+  cost: 1,
+  onHandScored: (_self, ctx) => (ctx.roll(n, d) ? { mult: 100 } : undefined),
+});
+const withJokers = (...jokers: JokerDefinition[]): RunContent => ({ ...DEFAULT_CONTENT, jokers });
+/** An Rng that counts how many numbers were drawn from it. */
+const countingRng = () => {
+  const rng = SeededRng.fromSeed('count', 'score');
+  const counter = { calls: 0 };
+  const wrapped: Rng = {
+    nextUint32: () => {
+      counter.calls += 1;
+      return rng.nextUint32();
+    },
+  };
+  return { rng: wrapped, counter };
+};
+
+describe('scoreHand: luck', () => {
+  const content = withJokers(roller('flip', 1, 2));
+
+  it('is reproducible: the same fresh generator gives the same score and steps', () => {
+    const run = () =>
+      scoreHand(
+        input('7h 7d', { jokers: [joker('flip')], rng: SeededRng.fromSeed('x', 'score') }),
+        content,
+      );
+    expect(run()).toEqual(run());
+  });
+
+  it('both outcomes happen across seeds, and the result follows the generator', () => {
+    const results = Array.from({ length: 40 }, (_, i) =>
+      scoreHand(
+        input('7h 7d', { jokers: [joker('flip')], rng: SeededRng.fromSeed(`s${i}`, 'score') }),
+        content,
+      ),
+    );
+    expect(new Set(results.map((r) => r.mult)).size).toBe(2);
+    for (const [i, r] of results.entries()) {
+      const hit = SeededRng.fromSeed(`s${i}`, 'score').nextUint32() % 2 === 0;
+      expect(r.mult === 102).toBe(hit);
+    }
+  });
+
+  it('without a generator roll is always false and never throws', () => {
+    const result = scoreHand(input('7h 7d', { jokers: [joker('flip')] }), content);
+    expect(result.mult).toBe(2);
+    expect(result.steps.length).toBe(3);
+  });
+
+  it.each([
+    [0, 4],
+    [-1, 4],
+    [1, 0],
+    [1, -2],
+  ])('roll(%i, %i) is false and draws nothing', (n, d) => {
+    const { rng, counter } = countingRng();
+    const result = scoreHand(
+      input('7h 7d', { jokers: [joker('r')], rng }),
+      withJokers(roller('r', n, d)),
+    );
+    expect(result.mult).toBe(2);
+    expect(counter.calls).toBe(0);
+  });
+
+  it.each([
+    [4, 4],
+    [5, 4],
+  ])('roll(%i, %i) is true and draws nothing', (n, d) => {
+    const { rng, counter } = countingRng();
+    const result = scoreHand(
+      input('7h 7d', { jokers: [joker('r')], rng }),
+      withJokers(roller('r', n, d)),
+    );
+    expect(result.mult).toBe(102);
+    expect(counter.calls).toBe(0);
+  });
+
+  it('rolls follow evaluation order: left joker first, then the next', () => {
+    const two = withJokers(roller('a', 1, 2), roller('b', 1, 2));
+    const manual = SeededRng.fromSeed('order', 'score');
+    const firstHit = manual.nextUint32() % 2 === 0;
+    const secondHit = manual.nextUint32() % 2 === 0;
+    const result = scoreHand(
+      input('7h 7d', {
+        jokers: [joker('a', 1), joker('b', 2)],
+        rng: SeededRng.fromSeed('order', 'score'),
+      }),
+      two,
+    );
+    expect(result.mult).toBe(2 + (firstHit ? 100 : 0) + (secondHit ? 100 : 0));
   });
 });

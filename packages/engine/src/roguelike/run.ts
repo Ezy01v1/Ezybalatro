@@ -54,7 +54,7 @@ export interface RunConfig {
 }
 
 /** Bumped when the saved shape of `RunState` changes; older saves are discarded. */
-export const RUN_STATE_VERSION = 3;
+export const RUN_STATE_VERSION = 4;
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   antes: 8,
@@ -155,6 +155,8 @@ export interface RunState {
     readonly boss: SeededRngState;
     /** Packs, vouchers and pack contents: kept apart so `shop` draws never move. */
     readonly pack: SeededRngState;
+    /** Luck while scoring (`ctx.roll`): kept apart so a roll never moves the shop or the packs. */
+    readonly score: SeededRngState;
   };
   readonly nextJokerNumber: number;
   /** Next consumable instance id is `c<n>`. */
@@ -291,6 +293,7 @@ interface Draft extends Omit<
     shop: SeededRngState;
     boss: SeededRngState;
     pack: SeededRngState;
+    score: SeededRngState;
   };
 }
 
@@ -339,6 +342,7 @@ export function createRun(
       shop: SeededRng.fromSeed(seed, 'shop').getState(),
       boss: SeededRng.fromSeed(seed, 'boss').getState(),
       pack: SeededRng.fromSeed(seed, 'pack').getState(),
+      score: SeededRng.fromSeed(seed, 'score').getState(),
     },
     nextJokerNumber: 1,
     nextConsumableNumber: 1,
@@ -463,6 +467,7 @@ function play(
   const held = d.hand.filter((c) => !played.includes(c));
   const boss = currentBoss(d, content);
   d.handsPlayed += 1;
+  const scoreRng = new SeededRng(d.rng.score);
   const result = scoreHand(
     {
       played,
@@ -473,10 +478,12 @@ function play(
       handsLeft: d.handsLeft - 1,
       discardsLeft: d.discardsLeft,
       money: d.money,
+      rng: scoreRng,
       ...(boss ? { isDebuffed: debuffRule(boss) } : {}),
     },
     content,
   );
+  d.rng.score = scoreRng.getState();
   d.jokers = [...result.jokers];
   d.money += result.money;
   d.roundScore += result.score;

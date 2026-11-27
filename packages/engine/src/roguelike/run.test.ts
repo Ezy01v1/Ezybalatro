@@ -477,7 +477,7 @@ describe('MVP content and shop', () => {
 
   it('saved states carry the schema version', () => {
     expect(createRun('v').state.version).toBe(RUN_STATE_VERSION);
-    expect(RUN_STATE_VERSION).toBe(3);
+    expect(RUN_STATE_VERSION).toBe(4);
   });
 
   it('starts with an empty inventory and counters at 1', () => {
@@ -1062,10 +1062,10 @@ describe('packs and vouchers in the shop', () => {
     ]);
   });
 
-  it('starts with no vouchers, no open pack and a pack stream, in state version 3', () => {
+  it('starts with no vouchers, no open pack and a pack stream, in state version 4', () => {
     const { state } = createRun('x');
-    expect(RUN_STATE_VERSION).toBe(3);
-    expect([state.version, state.vouchers, state.openPack]).toEqual([3, [], null]);
+    expect(RUN_STATE_VERSION).toBe(4);
+    expect([state.version, state.vouchers, state.openPack]).toEqual([4, [], null]);
     expect(state.rng.pack).toBeDefined();
   });
 });
@@ -1448,5 +1448,73 @@ describe('packs', () => {
       const offered = opened.items.map((i) => (i.kind === 'joker' ? i.jokerId : ''));
       expect(offered.filter((id) => onSale.includes(id))).toEqual([]);
     }
+  });
+});
+
+describe('score stream', () => {
+  const flipper: JokerDefinition = {
+    id: 'flipper',
+    rarity: 'common',
+    cost: 1,
+    onHandScored: (_self, ctx) => (ctx.roll(1, 2) ? { mult: 50 } : undefined),
+  };
+  const luckContent: RunContent = { ...DEFAULT_CONTENT, jokers: [flipper] };
+  /** A run holding the flipper from the start (the shop is not needed). */
+  const withFlipper = (seed: string): RunState => {
+    const { state } = createRun(seed, DEFAULT_RUN_CONFIG, luckContent);
+    return { ...state, jokers: [{ instanceId: 'j1', jokerId: 'flipper', state: {} }] };
+  };
+
+  it('has its own sub-stream, apart from shop and pack', () => {
+    const { rng } = createRun('seed').state;
+    expect(rng.score).toBeDefined();
+    expect(rng.score).not.toEqual(rng.shop);
+    expect(rng.score).not.toEqual(rng.pack);
+  });
+
+  it('a hand without luck leaves every stream except deck alone', () => {
+    const before = createRun('seed').state;
+    const after = playFirst(before).state;
+    expect(after.phase).toBe('blind');
+    expect(after.rng.score).toEqual(before.rng.score);
+    expect(after.rng.shop).toEqual(before.rng.shop);
+    expect(after.rng.pack).toEqual(before.rng.pack);
+  });
+
+  it('a hand with a roll advances only the score stream (and the draw)', () => {
+    const before = withFlipper('seed');
+    const after = playFirst(before, 1, luckContent).state;
+    expect(after.phase).toBe('blind');
+    expect(after.rng.score).not.toEqual(before.rng.score);
+    expect(after.rng.shop).toEqual(before.rng.shop);
+    expect(after.rng.pack).toEqual(before.rng.pack);
+    expect(after.rng.boss).toEqual(before.rng.boss);
+  });
+
+  it('replaying the same log gives the same state, events and luck', () => {
+    const log = (state: RunState) => {
+      const first = playFirst(state, 1, luckContent);
+      return first;
+    };
+    const a = log(withFlipper('same'));
+    const b = log(withFlipper('same'));
+    expect(a.state).toEqual(b.state);
+    expect(a.events).toEqual(b.events);
+    // And the whole-run replay API keeps working with the extra stream.
+    const created = createRun('replay', EASY, luckContent);
+    const played = playFirst(created.state, 2, luckContent);
+    const replayed = replayRun(
+      {
+        seed: 'replay',
+        config: EASY,
+        actions: [{ type: 'play', cardIds: created.state.hand.slice(0, 2).map((c) => c.id) }],
+      },
+      luckContent,
+    );
+    expect(replayed.state).toEqual(played.state);
+  });
+
+  it('the saved-run version is 4', () => {
+    expect(RUN_STATE_VERSION).toBe(4);
   });
 });
