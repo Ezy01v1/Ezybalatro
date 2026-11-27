@@ -4,14 +4,19 @@ import type { HandCategory } from '../hands/hand-category';
 import { CARD_CHIPS, DEFAULT_CONTENT } from './content';
 import type { Effect, HandContext, JokerEffect, JokerInstance, RunCard, RunContent } from './types';
 
+/** Extra passes one scoring card can get, however many jokers and enhancements ask for them. */
+export const MAX_RETRIGGERS = 3;
+
 export type ScoreSource =
   | { readonly kind: 'base'; readonly handType: HandCategory; readonly level: number }
-  | { readonly kind: 'card'; readonly cardId: string }
+  /** `repeat` is present only on the extra passes (1 = the first repeat). */
+  | { readonly kind: 'card'; readonly cardId: string; readonly repeat?: number }
   | {
       readonly kind: 'enhancement';
       readonly cardId: string;
       readonly enhancement: string;
       readonly held: boolean;
+      readonly repeat?: number;
     }
   | {
       readonly kind: 'joker';
@@ -19,6 +24,7 @@ export type ScoreSource =
       readonly jokerId: string;
       readonly hook: 'onCardScored' | 'onCardHeld' | 'onHandScored';
       readonly cardId?: string;
+      readonly repeat?: number;
     };
 
 /** One change to the tally, in order. The UI replays these to animate the score. */
@@ -128,7 +134,11 @@ export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTE
     money += effect.money ?? 0;
     steps.push({ source, effect, chips, mult });
   };
-  const runJokers = (hook: 'onCardScored' | 'onCardHeld' | 'onHandScored', card?: RunCard) => {
+  const runJokers = (
+    hook: 'onCardScored' | 'onCardHeld' | 'onHandScored',
+    card?: RunCard,
+    repeat = 0,
+  ) => {
     jokers.forEach((joker, i) => {
       const def = jokerDefs.get(joker.jokerId);
       if (!def) return;
@@ -146,23 +156,47 @@ export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTE
           jokerId: joker.jokerId,
           hook,
           ...(card ? { cardId: card.id } : {}),
+          ...(repeat > 0 ? { repeat } : {}),
         },
         effect,
       );
     });
   };
 
+  /** Extra passes asked by the jokers (left to right) and the card's enhancement, capped. */
+  const extraPasses = (card: RunCard): number => {
+    const count = (n: number | undefined) =>
+      n === undefined || Number.isNaN(n) ? 0 : Math.max(0, Math.floor(n));
+    let total = 0;
+    for (const joker of jokers) {
+      total += count(jokerDefs.get(joker.jokerId)?.retriggers?.(joker, ctx(), card));
+    }
+    const own = card.enhancement ? enhancementDefs.get(card.enhancement) : undefined;
+    total += count(own?.retriggers?.(card, ctx()));
+    return Math.min(MAX_RETRIGGERS, total);
+  };
+
   for (const card of scoringCards) {
     if (debuffed(card)) continue;
-    apply({ kind: 'card', cardId: card.id }, { chips: CARD_CHIPS[card.rank] });
     const enhancement = card.enhancement ? enhancementDefs.get(card.enhancement) : undefined;
-    if (enhancement?.onScored) {
-      apply(
-        { kind: 'enhancement', cardId: card.id, enhancement: enhancement.id, held: false },
-        enhancement.onScored(card, ctx()),
-      );
+    const passes = 1 + extraPasses(card);
+    for (let repeat = 0; repeat < passes; repeat++) {
+      const marked = repeat > 0 ? { repeat } : {};
+      apply({ kind: 'card', cardId: card.id, ...marked }, { chips: CARD_CHIPS[card.rank] });
+      if (enhancement?.onScored) {
+        apply(
+          {
+            kind: 'enhancement',
+            cardId: card.id,
+            enhancement: enhancement.id,
+            held: false,
+            ...marked,
+          },
+          enhancement.onScored(card, ctx()),
+        );
+      }
+      runJokers('onCardScored', card, repeat);
     }
-    runJokers('onCardScored', card);
   }
   for (const card of input.held) {
     if (debuffed(card)) continue;

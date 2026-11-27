@@ -46,7 +46,7 @@ export {
   VOUCHERS,
 } from './roguelike/content';
 export type { ScoreInput, ScoreResult, ScoreSource, ScoreStep } from './roguelike/scoring';
-export { handBase, scoreHand } from './roguelike/scoring';
+export { MAX_RETRIGGERS, handBase, scoreHand } from './roguelike/scoring';
 export type {
   OpenPack,
   RunAction,

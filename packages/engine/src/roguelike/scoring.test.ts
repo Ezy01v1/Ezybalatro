@@ -3,6 +3,7 @@ import {
   DEFAULT_CONTENT,
   SeededRng,
   HAND_CATEGORIES,
+  MAX_RETRIGGERS,
   parseCards,
   scoreHand,
   type HandCategory,
@@ -323,5 +324,136 @@ describe('scoreHand: luck', () => {
       two,
     );
     expect(result.mult).toBe(2 + (firstHit ? 100 : 0) + (secondHit ? 100 : 0));
+  });
+});
+
+const stepSummary = (result: ReturnType<typeof scoreHand>) =>
+  result.steps.map((s) => {
+    const src = s.source;
+    const repeat = 'repeat' in src && src.repeat !== undefined ? `#${src.repeat}` : '';
+    if (src.kind === 'base') return 'base';
+    if (src.kind === 'card') return `card:${src.cardId}${repeat}`;
+    if (src.kind === 'enhancement') return `enh:${src.cardId}${repeat}`;
+    return `joker:${src.instanceId}${repeat}`;
+  });
+const echoJoker = (id: string, retriggers: JokerDefinition['retriggers']): JokerDefinition => ({
+  id,
+  rarity: 'common',
+  cost: 1,
+  retriggers,
+});
+
+describe('scoreHand: retriggers', () => {
+  it('a retrigger runs the card again; the second pass is marked and the first is not', () => {
+    const content = withJokers(echoJoker('echo', () => 1));
+    const result = scoreHand(input('7h 7d', { jokers: [joker('echo')] }), content);
+    expect(stepSummary(result)).toEqual(['base', 'card:7h', 'card:7h#1', 'card:7d', 'card:7d#1']);
+    expect(result.chips).toBe(12 + 4 * 7);
+    expect(result.steps[1]!.source).not.toHaveProperty('repeat');
+  });
+
+  it('repeats chips, then the enhancement, then every joker, before the next card', () => {
+    const plus: RunContent['enhancements'][number] = { id: 'plus', onScored: () => ({ mult: 3 }) };
+    const tick: JokerDefinition = {
+      id: 'tick',
+      rarity: 'common',
+      cost: 1,
+      onCardScored: () => ({ mult: 1 }),
+    };
+    const echo = echoJoker('echo', (_self, ctx, card) => (card.id === ctx.scoring[0]!.id ? 1 : 0));
+    const content: RunContent = {
+      ...DEFAULT_CONTENT,
+      jokers: [echo, tick],
+      enhancements: [plus],
+    };
+    const [a, b] = parseCards('7h 7d');
+    const result = scoreHand(
+      input('7h 7d', {
+        played: [{ ...a!, enhancement: 'plus' }, b!],
+        jokers: [joker('echo', 1), joker('tick', 2)],
+      }),
+      content,
+    );
+    expect(stepSummary(result)).toEqual([
+      'base',
+      'card:7h',
+      'enh:7h',
+      'joker:j2',
+      'card:7h#1',
+      'enh:7h#1',
+      'joker:j2#1',
+      'card:7d',
+      'joker:j2',
+    ]);
+  });
+
+  it('five sources of one extra pass each stop at MAX_RETRIGGERS', () => {
+    const again: RunContent['enhancements'][number] = { id: 'again', retriggers: () => 1 };
+    const content: RunContent = {
+      ...DEFAULT_CONTENT,
+      jokers: ['a', 'b', 'c', 'd'].map((id) => echoJoker(id, () => 1)),
+      enhancements: [again],
+    };
+    const [a, b] = parseCards('7h 7d');
+    const result = scoreHand(
+      input('7h 7d', {
+        played: [{ ...a!, enhancement: 'again' }, b!],
+        jokers: ['a', 'b', 'c', 'd'].map((id, i) => joker(id, i + 1)),
+      }),
+      content,
+    );
+    const first = result.steps.filter((s) => s.source.kind === 'card' && s.source.cardId === '7h');
+    expect(first).toHaveLength(1 + MAX_RETRIGGERS);
+    expect(Math.max(...first.map((s) => (s.source as { repeat?: number }).repeat ?? 0))).toBe(
+      MAX_RETRIGGERS,
+    );
+    // The second card has four sources too (the four jokers), so it also stops at the cap.
+    expect(
+      result.steps.filter((s) => s.source.kind === 'card' && s.source.cardId === '7d'),
+    ).toHaveLength(1 + MAX_RETRIGGERS);
+  });
+
+  it('a debuffed card is neither scored nor repeated', () => {
+    const content = withJokers(echoJoker('echo', () => 1));
+    const result = scoreHand(
+      input('7h 7d', { jokers: [joker('echo')], isDebuffed: (c) => c.id === '7h' }),
+      content,
+    );
+    expect(stepSummary(result)).toEqual(['base', 'card:7d', 'card:7d#1']);
+  });
+
+  it('only the cards a joker picks are repeated', () => {
+    const content = withJokers(
+      echoJoker('first', (_s, ctx, c) => (c.id === ctx.scoring[0]!.id ? 1 : 0)),
+    );
+    const result = scoreHand(input('7h 7d', { jokers: [joker('first')] }), content);
+    expect(stepSummary(result)).toEqual(['base', 'card:7h', 'card:7h#1', 'card:7d']);
+  });
+
+  it('cards left in hand are never repeated', () => {
+    const heavy: RunContent['enhancements'][number] = {
+      id: 'heavyEcho',
+      onHeld: () => ({ chips: 10 }),
+      retriggers: () => 5,
+    };
+    const content: RunContent = { ...DEFAULT_CONTENT, jokers: [], enhancements: [heavy] };
+    const held = [{ ...parseCards('Kc')[0]!, enhancement: 'heavyEcho' }];
+    const result = scoreHand(input('7h 7d', { held }), content);
+    expect(stepSummary(result).filter((s) => s.startsWith('enh:'))).toEqual(['enh:Kc']);
+  });
+
+  it.each([[-2], [Number.NaN], [0.9], [undefined as unknown as number]])(
+    'a retrigger count of %s means no extra pass',
+    (count) => {
+      const content = withJokers(echoJoker('odd', () => count));
+      const result = scoreHand(input('7h 7d', { jokers: [joker('odd')] }), content);
+      expect(stepSummary(result)).toEqual(['base', 'card:7h', 'card:7d']);
+    },
+  );
+
+  it('a fractional count rounds down', () => {
+    const content = withJokers(echoJoker('frac', () => 1.9));
+    const result = scoreHand(input('7h 7d', { jokers: [joker('frac')] }), content);
+    expect(stepSummary(result)).toEqual(['base', 'card:7h', 'card:7h#1', 'card:7d', 'card:7d#1']);
   });
 });

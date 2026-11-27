@@ -75,6 +75,11 @@ export interface JokerDefinition {
   readonly initialState?: Readonly<Record<string, number>>;
   /** Once per scoring card, right after that card adds its chips. */
   onCardScored?(self: JokerInstance, ctx: HandContext, card: RunCard): JokerEffect | undefined;
+  /**
+   * Extra passes for a scoring card (not for cards left in hand), asked once per card before it
+   * scores. Counts add up across jokers and the card's enhancement, capped at `MAX_RETRIGGERS`.
+   */
+  retriggers?(self: JokerInstance, ctx: HandContext, card: RunCard): number;
   /** Once per card left in hand. */
   onCardHeld?(self: JokerInstance, ctx: HandContext, card: RunCard): JokerEffect | undefined;
   /** Once per hand, after all cards. */
@@ -89,6 +94,8 @@ export interface EnhancementDefinition {
   readonly id: string;
   onScored?(card: RunCard, ctx: HandContext): Effect | undefined;
   onHeld?(card: RunCard, ctx: HandContext): Effect | undefined;
+  /** Extra passes for this scoring card; see `JokerDefinition.retriggers`. */
+  retriggers?(card: RunCard, ctx: HandContext): number;
 }
 
 /** One operation of a consumable, applied in order. Adding a consumable never touches the reducer. */
