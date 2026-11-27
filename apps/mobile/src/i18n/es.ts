@@ -181,6 +181,10 @@ export const es = {
     abandonConfirm: 'Toca otra vez para abandonar',
     debuffed: 'No puntúa por el jefe',
   },
+  score: {
+    /** Prefix of a step that plays a card (or its effects) again. */
+    again: '↻',
+  },
   roundWon: {
     title: 'Ciega superada',
     reward: 'Recompensa de la ciega',
@@ -432,6 +436,53 @@ export const JOKER_TEXTS: Record<string, { name: string; short: string; descript
     short: '+$1/mano',
     description: '+$1 por cada mano sobrante al superar una ciega.',
   },
+  court_echo: {
+    name: 'Eco de la Corte',
+    short: 'J Q K ↻',
+    description: 'Cada figura (J, Q, K) que puntúa se juega una vez más.',
+  },
+  first_encore: {
+    name: 'Primer Bis',
+    short: '1.ª ↻',
+    description: 'La primera carta que puntúa se juega una vez más.',
+  },
+  last_encore: {
+    name: 'Último Bis',
+    short: 'Últ. ↻',
+    description: 'La última carta que puntúa se juega una vez más.',
+  },
+  heart_echo: {
+    name: 'Eco del Corazón',
+    short: '♥︎ ↻',
+    description: 'Cada ♥︎ que puntúa se juega una vez más.',
+  },
+  lucky_coin: {
+    name: 'Moneda de la Suerte',
+    short: '1/4 +$4',
+    description: 'Una de cada 4 manos da +$4.',
+  },
+  loaded_die: {
+    name: 'Dado Cargado',
+    short: '1/8 ×2',
+    description: 'Una de cada 8 manos multiplica ×2 el mult.',
+  },
+  spark: {
+    name: 'Chispa',
+    short: '1/3 +3',
+    description: 'Cada carta que puntúa tiene 1 de 3 de dar +3 mult.',
+  },
+};
+
+/** Joker edition labels (ids come from the engine content). `short` is the label on the joker. */
+export const EDITION_TEXTS: Record<string, { name: string; short: string; description: string }> = {
+  foil: { name: 'Lámina', short: 'Lám.', description: '+50 fichas cada mano.' },
+  holo: { name: 'Aura', short: 'Aura', description: '+10 mult cada mano.' },
+  poly: { name: 'Iridiscente', short: 'Irid.', description: '×1,5 mult cada mano.' },
+  ample: {
+    name: 'Amplio',
+    short: 'Ampl.',
+    description: 'Da un espacio de comodín más mientras lo tengas.',
+  },
 };
 
 /** Card enhancement labels (ids come from the engine content). `short` is the 3-letter badge. */
@@ -464,6 +515,12 @@ export const ENHANCEMENT_TEXTS: Record<
     short: 'Vol',
     timing: 'scored',
     description: '×1,3 mult al puntuar.',
+  },
+  coin: {
+    name: 'Moneda',
+    short: 'Mon',
+    timing: 'scored',
+    description: '1 de 2: +20 mult al puntuar.',
   },
 };
 

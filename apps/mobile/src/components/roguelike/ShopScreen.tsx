@@ -2,6 +2,7 @@ import {
   DEFAULT_CONTENT,
   findConsumable,
   jokerSellValue,
+  jokerSlotsFor,
   type RunState,
   type ShopOffer,
 } from '@naipes/engine';
@@ -61,7 +62,7 @@ function LootRow({
     line2 = voucher?.short ?? offer.voucherId;
   }
   const noRoom =
-    (packDef?.kind === 'joker' && run.jokers.length >= run.config.jokerSlots
+    (packDef?.kind === 'joker' && run.jokers.length >= jokerSlotsFor(run)
       ? es.shop.noJokerSlot
       : null) ??
     (packDef?.kind === 'consumable' && run.consumables.length >= run.config.consumableSlots
@@ -114,7 +115,7 @@ function OfferCard({
   const missing = offer.price - run.money;
   const full =
     offer.kind === 'joker'
-      ? run.jokers.length >= run.config.jokerSlots
+      ? run.jokers.length >= jokerSlotsFor(run)
       : run.consumables.length >= run.config.consumableSlots;
   const fullText = offer.kind === 'joker' ? es.shop.full : es.shop.fullConsumables;
   const status = offer.sold
@@ -230,7 +231,7 @@ export function ShopScreen({ run }: { run: RunState }) {
         </Text>
         <JokerRail
           jokers={run.jokers}
-          slots={run.config.jokerSlots}
+          slots={jokerSlotsFor(run)}
           onPressJoker={setDetailId}
           onMove={moveJoker}
         />

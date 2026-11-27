@@ -1,4 +1,10 @@
-import { findConsumable, isCardDebuffed, previewPlay, type RunState } from '@naipes/engine';
+import {
+  findConsumable,
+  isCardDebuffed,
+  jokerSlotsFor,
+  previewPlay,
+  type RunState,
+} from '@naipes/engine';
 import { useEffect, useMemo, useState } from 'react';
 import { BackHandler, Pressable, StyleSheet, View } from 'react-native';
 import { haptics, playSound } from '@/feedback/feedback';
@@ -155,7 +161,7 @@ export function GameScreen({ run }: { run: RunState }) {
       >
         <JokerRail
           jokers={run.jokers}
-          slots={run.config.jokerSlots}
+          slots={jokerSlotsFor(run)}
           pulses={view?.jokerPulses}
           labels={view?.jokerLabels}
           onPressJoker={setDetailId}
