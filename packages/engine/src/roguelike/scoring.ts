@@ -22,7 +22,7 @@ export type ScoreSource =
       readonly kind: 'joker';
       readonly instanceId: string;
       readonly jokerId: string;
-      readonly hook: 'onCardScored' | 'onCardHeld' | 'onHandScored';
+      readonly hook: 'onCardScored' | 'onCardHeld' | 'onHandScored' | 'edition';
       readonly cardId?: string;
       readonly repeat?: number;
     };
@@ -99,6 +99,7 @@ export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTE
   const debuffed = input.isDebuffed ?? (() => false);
   const jokerDefs = new Map(content.jokers.map((j) => [j.id, j]));
   const enhancementDefs = new Map(content.enhancements.map((e) => [e.id, e]));
+  const editionDefs = new Map(content.editions.map((e) => [e.id, e]));
   const jokers = input.jokers.map((j) => ({ ...j }));
 
   const base = handBase(handType, level, content);
@@ -160,6 +161,15 @@ export function scoreHand(input: ScoreInput, content: RunContent = DEFAULT_CONTE
         },
         effect,
       );
+      // A joker's edition is its own bonus, once per hand, right after its effect.
+      const edition =
+        hook === 'onHandScored' && joker.edition ? editionDefs.get(joker.edition) : undefined;
+      if (edition?.effect) {
+        apply(
+          { kind: 'joker', instanceId: joker.instanceId, jokerId: joker.jokerId, hook: 'edition' },
+          edition.effect,
+        );
+      }
     });
   };
 

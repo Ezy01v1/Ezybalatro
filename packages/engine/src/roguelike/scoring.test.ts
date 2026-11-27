@@ -457,3 +457,52 @@ describe('scoreHand: retriggers', () => {
     expect(stepSummary(result)).toEqual(['base', 'card:7h', 'card:7h#1', 'card:7d', 'card:7d#1']);
   });
 });
+
+describe('scoreHand: joker editions', () => {
+  const edited = (jokerId: string, n: number, edition: string): JokerInstance => ({
+    ...joker(jokerId, n),
+    edition,
+  });
+
+  it('foil adds its chips once per hand, right after the joker own effect', () => {
+    const result = scoreHand(input('7h 7d', { jokers: [edited('ember', 1, 'foil')] }));
+    expect(stepSummary(result)).toEqual(['base', 'card:7h', 'card:7d', 'joker:j1', 'joker:j1']);
+    expect(result.steps.at(-1)!.source).toMatchObject({ hook: 'edition' });
+    expect(result.steps.at(-1)!.effect).toEqual({ chips: 50 });
+    // pair 12 + 14 + 50 chips, mult 2 + 4.
+    expect([result.chips, result.mult]).toEqual([76, 6]);
+  });
+
+  it('holo adds mult and poly multiplies it', () => {
+    expect(scoreHand(input('7h 7d', { jokers: [edited('steady_hand', 1, 'holo')] })).mult).toBe(12);
+    expect(scoreHand(input('7h 7d', { jokers: [edited('steady_hand', 1, 'poly')] })).mult).toBe(3);
+  });
+
+  it('an edition applies even when the joker has no onHandScored hook', () => {
+    const result = scoreHand(input('7h 7d', { jokers: [edited('steady_hand', 1, 'foil')] }));
+    expect(stepSummary(result)).toEqual(['base', 'card:7h', 'card:7d', 'joker:j1']);
+  });
+
+  it('with two edited jokers the order is joker, its edition, next joker, its edition', () => {
+    const result = scoreHand(
+      input('7h 7d', { jokers: [edited('ember', 1, 'holo'), edited('prism', 2, 'foil')] }),
+    );
+    expect(stepSummary(result).slice(3)).toEqual(['joker:j1', 'joker:j1', 'joker:j2', 'joker:j2']);
+    // ((2 + 4 + 10) × 1.5) = 24; chips 26 + 50.
+    expect([result.chips, result.mult]).toEqual([76, 24]);
+  });
+
+  it('ample has no scoring effect and adds no step', () => {
+    const plain = scoreHand(input('7h 7d', { jokers: [joker('ember')] }));
+    const ample = scoreHand(input('7h 7d', { jokers: [edited('ember', 1, 'ample')] }));
+    expect(ample.steps).toEqual(plain.steps);
+    expect(ample.score).toBe(plain.score);
+  });
+
+  it('the edition survives the joker state update', () => {
+    const result = scoreHand(
+      input('7h 7d', { jokers: [{ ...edited('veteran', 1, 'foil'), state: { hands: 0 } }] }),
+    );
+    expect(result.jokers[0]!.edition).toBe('foil');
+  });
+});

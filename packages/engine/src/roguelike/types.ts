@@ -12,6 +12,8 @@ export interface JokerInstance {
   readonly jokerId: string;
   /** Per-instance counters (e.g. hands played since bought). Numbers only, so it serializes. */
   readonly state: Readonly<Record<string, number>>;
+  /** Edition id (see `EditionDefinition`), if the joker came with one from the shop. */
+  readonly edition?: string;
 }
 
 /** What a joker or an enhancement adds. Applied in this order: chips, then +mult, then ×mult. */
@@ -87,6 +89,18 @@ export interface JokerDefinition {
   onDiscard?(self: JokerInstance, ctx: DiscardContext): JokerEffect | undefined;
   onRoundEnd?(self: JokerInstance, ctx: RoundEndContext): JokerEffect | undefined;
   onShopEnter?(self: JokerInstance, ctx: ShopEnterContext): JokerEffect | undefined;
+}
+
+/**
+ * A joker edition: a bonus of its own, applied once per hand right after the joker's effect, and/or
+ * extra joker slots while the joker is owned. `cost` is added to the shop price.
+ */
+export interface EditionDefinition {
+  readonly id: string;
+  /** Surcharge on the joker's shop price (and half of it, rounded down, on the sell value). */
+  readonly cost: number;
+  readonly effect?: Effect;
+  readonly extraJokerSlots?: number;
 }
 
 /** Card modifier (e.g. extra chips when scored). Same idea as jokers, but attached to a card. */
@@ -194,6 +208,7 @@ export interface HandTypeStats {
 export interface RunContent {
   readonly jokers: readonly JokerDefinition[];
   readonly enhancements: readonly EnhancementDefinition[];
+  readonly editions: readonly EditionDefinition[];
   readonly bosses: readonly BossDefinition[];
   readonly consumables: readonly ConsumableDefinition[];
   readonly packs: readonly PackDefinition[];

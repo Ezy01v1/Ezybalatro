@@ -7,6 +7,8 @@ import {
   createRun,
   hasUniqueIds,
   isCardDebuffed,
+  jokerSellValue,
+  jokerSlotsFor,
   previewPlay,
   replayRun,
   runReducer,
@@ -22,7 +24,12 @@ import {
 import { deepFreeze } from '../testing/holdem-fixtures';
 
 /** Any single card beats every blind. */
-const EASY: RunConfig = { ...DEFAULT_RUN_CONFIG, anteTargets: [1, 1, 1, 1, 1, 1, 1, 1] };
+const EASY: RunConfig = {
+  ...DEFAULT_RUN_CONFIG,
+  anteTargets: [1, 1, 1, 1, 1, 1, 1, 1],
+  // Editions are tested on their own; the other shop tests want plain prices.
+  editionOneIn: 0,
+};
 
 function act(
   state: RunState,
@@ -1516,5 +1523,150 @@ describe('score stream', () => {
 
   it('the saved-run version is 4', () => {
     expect(RUN_STATE_VERSION).toBe(4);
+  });
+});
+
+describe('joker editions', () => {
+  const WITH_EDITIONS: RunConfig = { ...EASY, startingMoney: 50, editionOneIn: 8 };
+  const WITHOUT: RunConfig = { ...WITH_EDITIONS, editionOneIn: 0 };
+  const shopAt = (seed: string, config = WITH_EDITIONS): RunState =>
+    playFirst(createRun(seed, config).state).state;
+  const seeds = Array.from({ length: 200 }, (_, i) => `ed-${i}`);
+  const editionOf = (offer: RunState['shop'][number]) =>
+    offer.kind === 'joker' ? offer.edition : undefined;
+  const editionCost = (id: string | undefined) =>
+    DEFAULT_CONTENT.editions.find((e) => e.id === id)?.cost ?? 0;
+
+  it('does not move which cards are offered: same ids with and without editions', () => {
+    const ids = (state: RunState) =>
+      state.shop.map((o) =>
+        o.kind === 'joker' ? o.jokerId : o.kind === 'consumable' ? o.consumableId : o.kind,
+      );
+    for (const seed of seeds.slice(0, 20)) {
+      expect(ids(shopAt(seed))).toEqual(ids(shopAt(seed, WITHOUT)));
+    }
+  });
+
+  it('some joker offers come with an edition, and their price adds its surcharge', () => {
+    const found = seeds
+      .flatMap((seed) => shopAt(seed).shop)
+      .filter((o) => o.kind === 'joker' && o.edition !== undefined);
+    expect(found.length).toBeGreaterThan(0);
+    for (const offer of found) {
+      if (offer.kind !== 'joker') continue;
+      const cost = DEFAULT_CONTENT.jokers.find((j) => j.id === offer.jokerId)!.cost;
+      expect(offer.price).toBe(cost + editionCost(offer.edition));
+    }
+  });
+
+  it('never puts editions on consumables, packs or vouchers', () => {
+    for (const seed of seeds.slice(0, 50)) {
+      for (const offer of shopAt(seed).shop) {
+        if (offer.kind !== 'joker') expect(offer).not.toHaveProperty('edition');
+      }
+    }
+  });
+
+  it('buying an edited offer keeps the edition on the owned joker', () => {
+    const state = seeds.map((s) => shopAt(s)).find((st) => st.shop.some((o) => editionOf(o)))!;
+    const index = state.shop.findIndex((o) => editionOf(o) !== undefined);
+    const offer = state.shop[index]!;
+    const bought = act(state, { type: 'buy', offerIndex: index }).state;
+    expect(bought.jokers[0]!.edition).toBe(editionOf(offer));
+    expect(bought.money).toBe(state.money - offer.price);
+  });
+
+  it('a plain offer gives a joker with no edition property', () => {
+    const state = shopAt('plain', WITHOUT);
+    expect(act(state, { type: 'buy', offerIndex: 0 }).state.jokers[0]).not.toHaveProperty(
+      'edition',
+    );
+  });
+
+  it('sells for half the price including the surcharge, at least $1', () => {
+    const cheap: RunContent = {
+      ...DEFAULT_CONTENT,
+      jokers: [{ ...DEFAULT_CONTENT.jokers[0]!, id: 'cheap', cost: 1 }],
+    };
+    const instance = { instanceId: 'j1', jokerId: 'cheap', state: {} };
+    expect(jokerSellValue(instance, cheap)).toBe(1);
+    expect(jokerSellValue({ ...instance, edition: 'foil' }, cheap)).toBe(1); // floor(3 / 2)
+    expect(jokerSellValue({ ...instance, edition: 'poly' }, cheap)).toBe(2); // floor(5 / 2)
+    const six = { ...instance, jokerId: 'minimalist' };
+    expect(jokerSellValue({ ...six, edition: 'holo' })).toBe(4); // floor((6 + 3) / 2)
+  });
+
+  it('a reroll rolls editions again, and the whole run replays the same', () => {
+    const rerolled = seeds
+      .map((seed) => act(shopAt(seed), { type: 'reroll' }).state)
+      .find((st) => st.shop.some((o) => editionOf(o) !== undefined));
+    expect(rerolled).toBeDefined();
+    const first = createRun(seeds[0]!, WITH_EDITIONS).state;
+    const log = {
+      seed: seeds[0]!,
+      config: WITH_EDITIONS,
+      actions: [
+        { type: 'play' as const, cardIds: [first.hand[0]!.id] },
+        { type: 'reroll' as const },
+      ],
+    };
+    expect(replayRun(log).state).toEqual(replayRun(log).state);
+  });
+
+  it('jokers from a pack never carry an edition', () => {
+    const state = shopAt('pack');
+    const open = {
+      ...state,
+      openPack: {
+        packId: 'pack_joker',
+        picksLeft: 1,
+        items: [{ kind: 'joker' as const, jokerId: 'ember', taken: false }],
+      },
+    };
+    const picked = act(open, { type: 'pickFromPack', itemIndex: 0 }).state;
+    expect(picked.jokers[0]).not.toHaveProperty('edition');
+  });
+
+  describe('ample', () => {
+    const ownedWithAmple = (state: RunState): RunState => ({
+      ...state,
+      jokers: ['ember', 'prism', 'fan', 'saver', 'figurine'].map((jokerId, i) => ({
+        instanceId: `j${i + 1}`,
+        jokerId,
+        state: {},
+        ...(i === 4 ? { edition: 'ample' } : {}),
+      })),
+      nextJokerNumber: 6,
+    });
+
+    it('adds a slot while the joker is owned', () => {
+      const full = ownedWithAmple(shopAt('ample', WITHOUT));
+      expect(jokerSlotsFor(full)).toBe(6);
+      expect(jokerSlotsFor({ ...full, jokers: full.jokers.slice(0, 4) })).toBe(5);
+    });
+
+    it('lets you buy a sixth joker, then refuses a seventh', () => {
+      const full = ownedWithAmple(shopAt('ample', WITHOUT));
+      const sixth = act(full, { type: 'buy', offerIndex: 0 }).state;
+      expect(sixth.jokers).toHaveLength(6);
+      expect(errorOf({ ...sixth, money: 99 }, { type: 'buy', offerIndex: 1 })).toBe(
+        'NO_JOKER_SLOT',
+      );
+    });
+
+    it('selling the ample joker at 6/6 leaves a legal 5/5', () => {
+      const full = ownedWithAmple(shopAt('ample', WITHOUT));
+      const sixth = act(full, { type: 'buy', offerIndex: 0 }).state;
+      const sold = act(sixth, { type: 'sellJoker', instanceId: 'j5' }).state;
+      expect(sold.jokers).toHaveLength(5);
+      expect(sold.jokers.length).toBeLessThanOrEqual(jokerSlotsFor(sold));
+    });
+
+    it('also counts for joker packs: a full rail with ample still opens one', () => {
+      const full = { ...ownedWithAmple(shopAt('ample', WITHOUT)), money: 99 };
+      const packIndex = full.shop.findIndex((o) => o.kind === 'pack' && o.packId === 'pack_joker');
+      expect(packIndex).toBeGreaterThanOrEqual(0);
+      expect(act(full, { type: 'buy', offerIndex: packIndex }).state.openPack).not.toBeNull();
+    });
   });
 });

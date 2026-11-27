@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HAND_CATEGORIES } from '../hands/hand-category';
-import { CONSUMABLES, DEFAULT_CONTENT, ENHANCEMENTS, PACKS, VOUCHERS } from './content';
+import { CONSUMABLES, DEFAULT_CONTENT, EDITIONS, ENHANCEMENTS, PACKS, VOUCHERS } from './content';
 
 const CARD_OPS = ['enhanceCards', 'changeSuit', 'shiftRank', 'destroyCards', 'duplicateCard'];
 
@@ -159,5 +159,22 @@ describe('vouchers content', () => {
 
   it('is wired into DEFAULT_CONTENT', () => {
     expect(DEFAULT_CONTENT.vouchers).toBe(VOUCHERS);
+  });
+});
+
+describe('editions content', () => {
+  it('has foil, holo, poly and ample with unique ids and positive surcharges', () => {
+    expect(EDITIONS.map((e) => e.id)).toEqual(['foil', 'holo', 'poly', 'ample']);
+    for (const e of EDITIONS) expect(Number.isInteger(e.cost) && e.cost > 0).toBe(true);
+  });
+
+  it('each edition scores something or opens a slot', () => {
+    for (const e of EDITIONS) {
+      expect(e.effect !== undefined || (e.extraJokerSlots ?? 0) > 0).toBe(true);
+    }
+  });
+
+  it('is part of the default content', () => {
+    expect(DEFAULT_CONTENT.editions).toBe(EDITIONS);
   });
 });

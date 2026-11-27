@@ -2,6 +2,7 @@ import type { Rank } from '../cards';
 import type {
   BossDefinition,
   ConsumableDefinition,
+  EditionDefinition,
   EnhancementDefinition,
   HandTypeStats,
   JokerDefinition,
@@ -208,6 +209,18 @@ export const ENHANCEMENTS: readonly EnhancementDefinition[] = [
   { id: 'volatile', onScored: () => ({ xMult: 1.3 }) },
 ];
 
+/** Joker editions, rolled on shop offers. Proposed es-419 names in the comments. */
+export const EDITIONS: readonly EditionDefinition[] = [
+  // "Lámina": +50 chips.
+  { id: 'foil', cost: 2, effect: { chips: 50 } },
+  // "Aura": +10 mult.
+  { id: 'holo', cost: 3, effect: { mult: 10 } },
+  // "Iridiscente": ×1.5 mult.
+  { id: 'poly', cost: 4, effect: { xMult: 1.5 } },
+  // "Amplio": +1 joker slot while owned.
+  { id: 'ample', cost: 4, extraJokerSlots: 1 },
+];
+
 /**
  * Consumables (22): 9 studies (one per hand type, usable in the shop) and 13 that act on cards
  * from the hand (usable during a blind). Comments: proposed es-419 name and effect.
@@ -324,6 +337,7 @@ export const VOUCHERS: readonly VoucherDefinition[] = [
 export const DEFAULT_CONTENT: RunContent = {
   jokers: JOKERS,
   enhancements: ENHANCEMENTS,
+  editions: EDITIONS,
   bosses: BOSSES,
   consumables: CONSUMABLES,
   packs: PACKS,

@@ -51,6 +51,8 @@ export interface RunConfig {
   readonly shopPackOffers: number;
   /** Vouchers offered per shop visit (never one already bought). */
   readonly shopVoucherOffers: number;
+  /** Each joker offer comes with an edition one time in this many (0 = never). */
+  readonly editionOneIn: number;
 }
 
 /** Bumped when the saved shape of `RunState` changes; older saves are discarded. */
@@ -78,14 +80,17 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   rerollCostStep: 1,
   shopPackOffers: 2,
   shopVoucherOffers: 1,
+  editionOneIn: 8,
 };
 
 export type ShopOffer =
   | {
       readonly kind: 'joker';
       readonly jokerId: string;
+      /** Includes the edition's surcharge. */
       readonly price: number;
       readonly sold: boolean;
+      readonly edition?: string;
     }
   | {
       readonly kind: 'consumable';
@@ -652,6 +657,15 @@ function rollOffers(d: Draft, content: RunContent): ShopOffer[] {
       sold: false,
     });
   }
+  // Editions come last, after every other draw of this visit, so they never move which cards
+  // are offered (only what the next visit or reroll draws).
+  if (d.config.editionOneIn > 0 && content.editions.length > 0) {
+    for (const [i, offer] of offers.entries()) {
+      if (offer.kind !== 'joker' || nextInt(rng, d.config.editionOneIn) !== 0) continue;
+      const edition = content.editions[nextInt(rng, content.editions.length)]!;
+      offers[i] = { ...offer, edition: edition.id, price: offer.price + edition.cost };
+    }
+  }
   d.rng.shop = rng.getState();
   return offers;
 }
@@ -706,7 +720,7 @@ function buy(
   } else if (offer.kind === 'pack') {
     const pack = content.packs.find((p) => p.id === offer.packId);
     if (!pack) return err('INVALID_OFFER', 'Unknown pack');
-    if (pack.kind === 'joker' && d.jokers.length >= d.config.jokerSlots)
+    if (pack.kind === 'joker' && d.jokers.length >= jokerSlotsFor(d, content))
       return err('NO_JOKER_SLOT', 'All joker slots are full');
     if (pack.kind === 'consumable' && d.consumables.length >= d.config.consumableSlots)
       return err('NO_CONSUMABLE_SLOT', 'All consumable slots are full');
@@ -726,13 +740,14 @@ function buy(
       consumableId: offer.consumableId,
     });
   } else {
-    if (d.jokers.length >= d.config.jokerSlots)
+    if (d.jokers.length >= jokerSlotsFor(d, content))
       return err('NO_JOKER_SLOT', 'All joker slots are full');
     const def = content.jokers.find((j) => j.id === offer.jokerId);
     d.jokers.push({
       instanceId: `j${d.nextJokerNumber++}`,
       jokerId: offer.jokerId,
       state: { ...def?.initialState },
+      ...(offer.edition ? { edition: offer.edition } : {}),
     });
   }
   d.money -= offer.price;
@@ -810,7 +825,7 @@ function pickFromPack(
   if (!item || item.taken) return err('INVALID_PACK_ITEM', 'No such option');
   switch (item.kind) {
     case 'joker': {
-      if (d.jokers.length >= d.config.jokerSlots)
+      if (d.jokers.length >= jokerSlotsFor(d, content))
         return err('NO_JOKER_SLOT', 'All joker slots are full');
       const def = content.jokers.find((j) => j.id === item.jokerId);
       d.jokers.push({
@@ -1063,13 +1078,30 @@ export function consumableSellValue(
   return Math.max(1, Math.floor(cost / 2));
 }
 
-/** Money you get for selling a joker: half its price, rounded down, at least $1. */
+/**
+ * Money you get for selling a joker: half what it cost in the shop (its edition's surcharge
+ * included), rounded down, at least $1.
+ */
 export function jokerSellValue(
   joker: JokerInstance,
   content: RunContent = DEFAULT_CONTENT,
 ): number {
-  const cost = content.jokers.find((j) => j.id === joker.jokerId)?.cost ?? 2;
-  return Math.max(1, Math.floor(cost / 2));
+  const base = content.jokers.find((j) => j.id === joker.jokerId)?.cost ?? 2;
+  const surcharge = content.editions.find((e) => e.id === joker.edition)?.cost ?? 0;
+  return Math.max(1, Math.floor((base + surcharge) / 2));
+}
+
+/** Joker slots in use right now: the config's plus those opened by the editions of owned jokers. */
+export function jokerSlotsFor(
+  state: Pick<RunState, 'config' | 'jokers'>,
+  content: RunContent = DEFAULT_CONTENT,
+): number {
+  const extra = state.jokers.reduce(
+    (sum, joker) =>
+      sum + (content.editions.find((e) => e.id === joker.edition)?.extraJokerSlots ?? 0),
+    0,
+  );
+  return state.config.jokerSlots + extra;
 }
 
 function currentBoss(d: Draft | RunState, content: RunContent): BossDefinition | undefined {
