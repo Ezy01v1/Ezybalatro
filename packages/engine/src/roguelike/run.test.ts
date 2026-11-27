@@ -1193,3 +1193,245 @@ describe('vouchers', () => {
     expect(next.shop.some((o) => o.kind === 'voucher')).toBe(false);
   });
 });
+
+describe('packs', () => {
+  const PACK_INDEX = 4;
+  const withPack = (id: string, extra: Partial<RunContent> = {}): RunContent => ({
+    ...DEFAULT_CONTENT,
+    packs: DEFAULT_CONTENT.packs.filter((p) => p.id === id),
+    ...extra,
+  });
+  const shopWith = (content: RunContent, config: Partial<RunConfig> = {}) =>
+    playFirst(
+      createRun('packs', { ...EASY, startingMoney: 50, ...config }, content).state,
+      1,
+      content,
+    ).state;
+  const openPack = (id: string, config: Partial<RunConfig> = {}) => {
+    const content = withPack(id);
+    const state = shopWith(content, config);
+    return { content, state, opened: act(state, { type: 'buy', offerIndex: PACK_INDEX }, content) };
+  };
+  const pick = (itemIndex: number): RunAction => ({ type: 'pickFromPack', itemIndex });
+  const codeOf = (state: RunState, action: RunAction, content: RunContent) => {
+    const result = runReducer(state, action, content);
+    return result.ok ? 'ok' : result.error.code;
+  };
+
+  it('opens each kind of pack with `size` distinct options, charging the price', () => {
+    for (const def of DEFAULT_CONTENT.packs) {
+      const { state, opened } = openPack(def.id);
+      expect(opened.state.money).toBe(state.money - def.cost);
+      expect(opened.state.shop[PACK_INDEX]).toMatchObject({ kind: 'pack', sold: true });
+      expect(opened.events.map((e) => e.type)).toEqual(['bought', 'packOpened']);
+      const open = opened.state.openPack!;
+      expect([open.packId, open.picksLeft, open.items.length]).toEqual([
+        def.id,
+        def.picks,
+        def.size,
+      ]);
+      expect(open.items.every((i) => !i.taken && i.kind === def.kind)).toBe(true);
+      const keys = open.items.map((i) =>
+        i.kind === 'joker'
+          ? i.jokerId
+          : i.kind === 'consumable'
+            ? i.consumableId
+            : `${i.rank}${i.suit}`,
+      );
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+
+  it('card packs only offer enhanced cards from the content', () => {
+    const { opened } = openPack('pack_card');
+    const known = DEFAULT_CONTENT.enhancements.map((e) => e.id);
+    for (const item of opened.state.openPack!.items) {
+      expect(item.kind === 'card' && known.includes(item.enhancement)).toBe(true);
+    }
+  });
+
+  it('joker packs never offer a joker already owned', () => {
+    const content = withPack('pack_joker');
+    const state = shopWith(content);
+    const owned = act(state, { type: 'buy', offerIndex: 0 }, content).state;
+    const items = act(owned, { type: 'buy', offerIndex: PACK_INDEX }, content).state.openPack!
+      .items;
+    const ownedId = owned.jokers[0]!.jokerId;
+    expect(items.some((i) => i.kind === 'joker' && i.jokerId === ownedId)).toBe(false);
+  });
+
+  it('is deterministic and draws only from the pack stream', () => {
+    const first = openPack('pack_joker');
+    const second = openPack('pack_joker');
+    expect(first.opened.state.openPack).toEqual(second.opened.state.openPack);
+    expect(first.opened.state.rng.shop).toEqual(first.state.rng.shop);
+    expect(first.opened.state.rng.pack).not.toEqual(first.state.rng.pack);
+  });
+
+  it('picking a joker, a consumable or a card puts it where it belongs and closes the pack', () => {
+    const joker = openPack('pack_joker');
+    const afterJoker = act(joker.opened.state, pick(0), joker.content);
+    const item = joker.opened.state.openPack!.items[0]!;
+    const def = DEFAULT_CONTENT.jokers.find((j) => item.kind === 'joker' && j.id === item.jokerId)!;
+    expect(afterJoker.state.jokers).toEqual([
+      { instanceId: 'j1', jokerId: def.id, state: { ...def.initialState } },
+    ]);
+    expect(afterJoker.state.openPack).toBeNull();
+    expect(afterJoker.events).toEqual([{ type: 'packPicked', itemIndex: 0 }]);
+
+    const consumable = openPack('pack_consumable');
+    const picked = consumable.opened.state.openPack!.items[1]!;
+    const afterConsumable = act(consumable.opened.state, pick(1), consumable.content).state;
+    expect(afterConsumable.consumables).toEqual([
+      { instanceId: 'c1', consumableId: picked.kind === 'consumable' ? picked.consumableId : '' },
+    ]);
+
+    const card = openPack('pack_card');
+    const chosen = card.opened.state.openPack!.items[2]!;
+    const afterCard = act(card.opened.state, pick(2), card.content).state;
+    expect(afterCard.deck).toHaveLength(53);
+    expect(afterCard.deck[52]).toEqual({
+      id: 'x1',
+      ...(chosen.kind === 'card'
+        ? { suit: chosen.suit, rank: chosen.rank, enhancement: chosen.enhancement }
+        : {}),
+    });
+    expect(hasUniqueIds(afterCard.deck)).toBe(true);
+    expect(afterCard.nextCardNumber).toBe(2);
+  });
+
+  it('takes several picks, marks taken items and refuses the same item twice', () => {
+    const content = withPack('pack_consumable');
+    const two: RunContent = { ...content, packs: [{ ...content.packs[0]!, picks: 2 }] };
+    const opened = act(shopWith(two), { type: 'buy', offerIndex: PACK_INDEX }, two).state;
+    const once = act(opened, pick(0), two).state;
+    expect(once.openPack!.picksLeft).toBe(1);
+    expect(once.openPack!.items.map((i) => i.taken)).toEqual([true, false, false]);
+    expect(codeOf(once, pick(0), two)).toBe('INVALID_PACK_ITEM');
+    const twice = act(once, pick(2), two).state;
+    expect(twice.openPack).toBeNull();
+    expect(twice.consumables).toHaveLength(2);
+  });
+
+  it('skipping closes the pack, also after a partial pick', () => {
+    const { opened, content } = openPack('pack_joker');
+    const skipped = act(opened.state, { type: 'skipPack' }, content);
+    expect(skipped.state.openPack).toBeNull();
+    expect(skipped.events).toEqual([{ type: 'packSkipped' }]);
+    expect(skipped.state.jokers).toEqual([]);
+
+    const two: RunContent = { ...content, packs: [{ ...content.packs[0]!, picks: 2 }] };
+    const reopened = act(shopWith(two), { type: 'buy', offerIndex: PACK_INDEX }, two).state;
+    const partly = act(reopened, pick(0), two).state;
+    expect(act(partly, { type: 'skipPack' }, two).state.openPack).toBeNull();
+  });
+
+  it('refuses to open a pack with no free slot, without charging', () => {
+    const jokers = withPack('pack_joker');
+    const full = act(
+      shopWith(jokers, { jokerSlots: 1 }),
+      { type: 'buy', offerIndex: 0 },
+      jokers,
+    ).state;
+    expect(codeOf(full, { type: 'buy', offerIndex: PACK_INDEX }, jokers)).toBe('NO_JOKER_SLOT');
+
+    const items = withPack('pack_consumable');
+    const stocked = act(
+      shopWith(items, { consumableSlots: 1 }),
+      { type: 'buy', offerIndex: 2 },
+      items,
+    ).state;
+    expect(codeOf(stocked, { type: 'buy', offerIndex: PACK_INDEX }, items)).toBe(
+      'NO_CONSUMABLE_SLOT',
+    );
+  });
+
+  it('fails a pick with no free slot, keeping the pack open and the state unchanged', () => {
+    const { opened, content } = openPack('pack_joker', { jokerSlots: 1 });
+    const crowded: RunState = {
+      ...opened.state,
+      jokers: [{ instanceId: 'j9', jokerId: 'tip_jar', state: {} }],
+    };
+    expect(codeOf(crowded, pick(0), content)).toBe('NO_JOKER_SLOT');
+
+    const { opened: itemPack, content: itemContent } = openPack('pack_consumable', {
+      consumableSlots: 1,
+    });
+    const stocked: RunState = {
+      ...itemPack.state,
+      consumables: [{ instanceId: 'c9', consumableId: 'study_pair' }],
+    };
+    expect(codeOf(stocked, pick(0), itemContent)).toBe('NO_CONSUMABLE_SLOT');
+    // The reducer never mutates: the open pack is still all untaken.
+    expect(stocked.openPack!.items.every((i) => !i.taken)).toBe(true);
+  });
+
+  it('locks the shop while a pack is open', () => {
+    const { opened, content } = openPack('pack_joker');
+    const locked: RunAction[] = [
+      { type: 'buy', offerIndex: 0 },
+      { type: 'reroll' },
+      { type: 'leaveShop' },
+      { type: 'sellJoker', instanceId: 'j1' },
+      { type: 'applyConsumable', instanceId: 'c1' },
+      { type: 'sellConsumable', instanceId: 'c1' },
+      { type: 'moveJoker', from: 0, to: 1 },
+    ];
+    for (const action of locked) expect(codeOf(opened.state, action, content)).toBe('PACK_OPEN');
+    expect(act(opened.state, { type: 'abandon' }, content).state.status).toBe('abandoned');
+  });
+
+  it('rejects picks and skips without an open pack and picks out of range', () => {
+    const { state, opened, content } = openPack('pack_joker');
+    expect(codeOf(state, pick(0), content)).toBe('NO_PACK_OPEN');
+    expect(codeOf(state, { type: 'skipPack' }, content)).toBe('NO_PACK_OPEN');
+    expect(codeOf(opened.state, pick(-1), content)).toBe('INVALID_PACK_ITEM');
+    expect(codeOf(opened.state, pick(99), content)).toBe('INVALID_PACK_ITEM');
+  });
+
+  it('offers what the catalog has and refuses a pack with nothing to offer', () => {
+    const two: RunContent = {
+      ...withPack('pack_joker'),
+      jokers: DEFAULT_CONTENT.jokers.slice(0, 2),
+    };
+    const state = shopWith(two);
+    expect(
+      act(state, { type: 'buy', offerIndex: PACK_INDEX }, two).state.openPack!.items,
+    ).toHaveLength(2);
+
+    const one: RunContent = {
+      ...withPack('pack_joker'),
+      jokers: DEFAULT_CONTENT.jokers.slice(0, 1),
+    };
+    const owned: RunState = {
+      ...shopWith(one),
+      jokers: [{ instanceId: 'j1', jokerId: one.jokers[0]!.id, state: {} }],
+    };
+    // With one joker in the catalog the shop has only one joker offer, so the pack moves up.
+    const packIndex = owned.shop.findIndex((o) => o.kind === 'pack');
+    expect(codeOf(owned, { type: 'buy', offerIndex: packIndex }, one)).toBe('INVALID_OFFER');
+  });
+
+  it('survives a save and load with the pack open', () => {
+    const { opened, content } = openPack('pack_card');
+    const loaded = JSON.parse(JSON.stringify(opened.state)) as RunState;
+    expect(loaded.openPack).toEqual(opened.state.openPack);
+    expect(act(loaded, pick(0), content).state.deck).toHaveLength(53);
+  });
+
+  it('is reproduced by replayRun', () => {
+    const content = withPack('pack_card');
+    const config = { ...EASY, startingMoney: 50 };
+    const first = createRun('packs', config, content).state.hand[0]!.id;
+    const actions: RunAction[] = [
+      { type: 'play', cardIds: [first] },
+      { type: 'buy', offerIndex: PACK_INDEX },
+      pick(1),
+      { type: 'leaveShop' },
+    ];
+    const once = replayRun({ seed: 'packs', config, actions }, content).state;
+    const again = replayRun({ seed: 'packs', config, actions }, content).state;
+    expect(once).toEqual(again);
+    expect(once.deck).toHaveLength(53);
+  });
+});

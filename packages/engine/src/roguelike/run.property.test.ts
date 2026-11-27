@@ -46,18 +46,44 @@ function consumableAction(rng: Rng, state: RunState): RunAction | null {
   return runReducer(state, action).ok ? action : null;
 }
 
+/** A joker or consumable pack cannot be opened while its slots are full. */
+function packNeedsFullSlot(
+  state: RunState,
+  packId: string,
+  jokersFull: boolean,
+  consumablesFull: boolean,
+): boolean {
+  const kind = DEFAULT_CONTENT.packs.find((p) => p.id === packId)?.kind;
+  return (kind === 'joker' && jokersFull) || (kind === 'consumable' && consumablesFull);
+}
+
+/** With a pack open: pick a random option that fits (or skip). */
+function packAction(rng: Rng, state: RunState): RunAction {
+  const jokersFull = state.jokers.length >= state.config.jokerSlots;
+  const consumablesFull = state.consumables.length >= state.config.consumableSlots;
+  const fits = state.openPack!.items.flatMap((item, i) =>
+    item.taken ||
+    (item.kind === 'joker' && jokersFull) ||
+    (item.kind === 'consumable' && consumablesFull)
+      ? []
+      : [i],
+  );
+  if (fits.length === 0 || nextInt(rng, 5) === 0) return { type: 'skipPack' };
+  return { type: 'pickFromPack', itemIndex: fits[nextInt(rng, fits.length)]! };
+}
+
 function randomAction(rng: Rng, state: RunState): RunAction {
   const roll = nextInt(rng, 100);
+  if (state.phase === 'shop' && state.openPack) return packAction(rng, state);
   if (state.phase === 'shop') {
     const jokersFull = state.jokers.length >= state.config.jokerSlots;
     const consumablesFull = state.consumables.length >= state.config.consumableSlots;
     const affordable = state.shop.flatMap((o, i) =>
       !o.sold &&
-      // Packs and vouchers join the generator when they can be bought.
-      (o.kind === 'joker' || o.kind === 'consumable') &&
       o.price <= state.money &&
       !(o.kind === 'joker' && jokersFull) &&
-      !(o.kind === 'consumable' && consumablesFull)
+      !(o.kind === 'consumable' && consumablesFull) &&
+      !(o.kind === 'pack' && packNeedsFullSlot(state, o.packId, jokersFull, consumablesFull))
         ? [i]
         : [],
     );
@@ -114,7 +140,10 @@ function playRandomRun(seed: string, config: RunConfig, saveLoadAt: number) {
     expect(state.deck.length).toBeGreaterThanOrEqual(config.minDeckSize);
     // Copies made by consumables can leave the hand over the limit, one card per copy at most.
     expect(state.hand.length).toBeLessThanOrEqual(config.handSize + state.nextCardNumber - 1);
-    expect(state.consumables.length).toBeLessThanOrEqual(config.consumableSlots);
+    expect(state.consumables.length).toBeLessThanOrEqual(state.config.consumableSlots);
+    expect(state.jokers.length).toBeLessThanOrEqual(state.config.jokerSlots);
+    expect(state.openPack === null || state.phase === 'shop').toBe(true);
+    expect(new Set(state.vouchers).size).toBe(state.vouchers.length);
     expect(new Set(state.consumables.map((c) => c.instanceId)).size).toBe(state.consumables.length);
     expect(state.money).toBeGreaterThanOrEqual(0);
     expect(Number.isFinite(state.roundScore)).toBe(true);
@@ -128,6 +157,8 @@ describe('run properties', () => {
     let usedConsumables = 0;
     let runsWithCopies = 0;
     let runsWithScrap = 0;
+    let pickedFromPacks = 0;
+    let vouchersBought = 0;
     fc.assert(
       fc.property(fc.string(), fc.boolean(), fc.nat({ max: 60 }), (seed, gentle, saveLoadAt) => {
         const config = gentle ? GENTLE : DEFAULT_RUN_CONFIG;
@@ -136,6 +167,8 @@ describe('run properties', () => {
         if (state.nextCardNumber > 1) runsWithCopies++;
         if (state.deck.length < 52 + state.nextCardNumber - 1) runsWithScrap++;
         usedConsumables += actions.filter((a) => a.type === 'applyConsumable').length;
+        pickedFromPacks += actions.filter((a) => a.type === 'pickFromPack').length;
+        vouchersBought += state.vouchers.length;
         const replayed = replayRun({ seed, config, actions }).state;
         expect(replayed).toEqual(state);
         expect(replayed.bestHandScore).toBe(state.bestHandScore);
@@ -148,6 +181,8 @@ describe('run properties', () => {
     expect(usedConsumables).toBeGreaterThan(0);
     expect(runsWithCopies).toBeGreaterThan(0);
     expect(runsWithScrap).toBeGreaterThan(0);
+    expect(pickedFromPacks).toBeGreaterThan(0);
+    expect(vouchersBought).toBeGreaterThan(0);
   }, 60_000);
 
   it('the same seed and actions give the same events', () => {
