@@ -14,9 +14,10 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import Svg, { Defs, Line, Pattern, Rect } from 'react-native-svg';
-import { es, RANK_LABELS, RANK_NAMES, SUIT_NAMES } from '@/i18n/es';
+import { ENHANCEMENT_TEXTS, es, RANK_LABELS, RANK_NAMES, SUIT_NAMES } from '@/i18n/es';
 import { colors, layout, motion, radii, typography } from '@/theme/tokens';
 import { Text } from '@/ui/primitives';
+import { EnhancementBadge } from './EnhancementBadge';
 import { SuitIcon } from './SuitIcon';
 
 const ease = (points: readonly number[]) =>
@@ -40,8 +41,11 @@ export interface PlayingCardProps {
   onPress?: (cardId: string) => void;
 }
 
-export const cardA11yLabel = (card: RunCard) =>
-  `${RANK_NAMES[card.rank]} de ${SUIT_NAMES[card.suit]}`;
+/** Face and enhancement come from the card's data, never from its id. */
+export const cardA11yLabel = (card: RunCard) => {
+  const enhancement = card.enhancement ? ENHANCEMENT_TEXTS[card.enhancement] : undefined;
+  return `${RANK_NAMES[card.rank]} de ${SUIT_NAMES[card.suit]}${enhancement ? `, ${enhancement.name}` : ''}`;
+};
 
 function PlayingCardComponent({
   card,
@@ -127,6 +131,10 @@ function PlayingCardComponent({
             <SuitIcon suit={card.suit} size={Math.round(width * 0.46)} />
           </View>
           {debuffed ? <DebuffOverlay /> : null}
+          {/* Over the boss hatching, which would otherwise hide the tag. */}
+          {card.enhancement ? (
+            <EnhancementBadge enhancement={card.enhancement} testID={`card-badge-${card.id}`} />
+          ) : null}
         </Pressable>
       </Animated.View>
     </Animated.View>

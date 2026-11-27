@@ -12,6 +12,7 @@ import { useArmed } from '@/ui/useArmed';
 import { useTransientNotice } from '@/ui/useTransientNotice';
 import { ConsumableSheet } from './ConsumableSheet';
 import { ConsumableTray } from './ConsumableTray';
+import { DeckSheet } from './DeckSheet';
 import { JokerDetailSheet } from './JokerDetailSheet';
 import { JokerRail } from './JokerRail';
 
@@ -91,6 +92,7 @@ export function ShopScreen({ run }: { run: RunState }) {
   const detail = run.jokers.find((j) => j.instanceId === detailId) ?? null;
   const [armedSell, setArmedSell] = useArmed<string>();
   const [consumableId, setConsumableId] = useState<string | null>(null);
+  const [deckOpen, setDeckOpen] = useState(false);
   const [notice, showNotice] = useTransientNotice();
 
   const onBuy = (index: number) => {
@@ -136,9 +138,18 @@ export function ShopScreen({ run }: { run: RunState }) {
           onPressJoker={setDetailId}
           onMove={moveJoker}
         />
-        <Text variant="caption" tone="muted">
-          {es.shop.yourConsumables}
-        </Text>
+        <View style={styles.trayHeader}>
+          <Text variant="caption" tone="muted">
+            {es.shop.yourConsumables}
+          </Text>
+          <Button
+            testID="deck-open"
+            variant="ghost"
+            label={`${es.consumables.deck.open} · ${run.deck.length}`}
+            accessibilityLabel={es.consumables.deck.openA11y(run.deck.length)}
+            onPress={() => setDeckOpen(true)}
+          />
+        </View>
         <ConsumableTray run={run} variant="wide" onPress={setConsumableId} />
         <View style={styles.noticeSlot}>{notice ? <Notice message={notice} /> : null}</View>
         {jokerOffers.length > 0 ? (
@@ -179,6 +190,7 @@ export function ShopScreen({ run }: { run: RunState }) {
         onClose={() => setConsumableId(null)}
         onUsed={showNotice}
       />
+      <DeckSheet visible={deckOpen} run={run} onClose={() => setDeckOpen(false)} />
       <JokerDetailSheet
         joker={detail}
         onClose={() => {
@@ -227,6 +239,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   offerSold: { opacity: 0.55 },
+  trayHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   // Reserved so the notice never makes the offers jump.
   noticeSlot: { minHeight: spacing.xl, justifyContent: 'center' },
   offerFooter: {

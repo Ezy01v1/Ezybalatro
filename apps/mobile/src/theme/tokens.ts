@@ -56,6 +56,10 @@ export const typography = {
     fontVariant: ['tabular-nums'],
   },
   cardIndex: { fontFamily: fonts.display, fontSize: 19, lineHeight: 20 },
+  /** Rank on a deck-viewer tile. */
+  tileIndex: { fontFamily: fonts.display, fontSize: 14, lineHeight: 15 },
+  /** Three-letter enhancement tag on a card. */
+  badge: { fontFamily: fonts.uiBold, fontSize: 11, lineHeight: 14 },
 } as const;
 
 export const spacing = { xxs: 2, xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
@@ -73,7 +77,7 @@ export const layout = {
   /** Consumable tickets: compact (blind tool row) and wide (shop). Height = touch target. */
   consumableSlot: { minWidth: 56, height: 48, heightWide: 56 },
   /** Tile of a card in the deck viewer. */
-  deckTile: { width: 36, height: 50 },
+  deckTile: { width: 36, height: 50, suitSize: 12 },
   /** Cards and other fixed-size boxes cap text scaling so they do not overflow. */
   fixedBoxFontScale: 1.2,
 } as const;

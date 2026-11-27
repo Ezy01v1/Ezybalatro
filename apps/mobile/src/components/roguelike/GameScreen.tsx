@@ -12,6 +12,7 @@ import { useTransientNotice } from '@/ui/useTransientNotice';
 import { consumableErrorText } from './consumable-errors';
 import { ConsumableSheet } from './ConsumableSheet';
 import { ConsumableTray } from './ConsumableTray';
+import { DeckSheet } from './DeckSheet';
 import {
   ActionBar,
   BlindBar,
@@ -48,6 +49,7 @@ export function GameScreen({ run }: { run: RunState }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = run.jokers.find((j) => j.instanceId === detailId) ?? null;
   const [levelsOpen, setLevelsOpen] = useState(false);
+  const [deckOpen, setDeckOpen] = useState(false);
   const [consumableId, setConsumableId] = useState<string | null>(null);
   const [notice, showNotice] = useTransientNotice();
   const [limitHint, showLimitHint] = useTransientNotice(LIMIT_HINT_MS);
@@ -231,9 +233,17 @@ export function GameScreen({ run }: { run: RunState }) {
           disabled={!!playback || !!beaten || !!targeting}
           activeId={targeting?.instanceId ?? null}
         />
-        <Text variant="caption" tone="muted" maxFontSizeMultiplier={layout.fixedBoxFontScale}>
-          {es.game.deck(run.drawPile.length)}
-        </Text>
+        <Pressable
+          testID="deck-open"
+          accessibilityRole="button"
+          accessibilityLabel={es.consumables.deck.openA11y(run.deck.length)}
+          onPress={() => setDeckOpen(true)}
+          style={styles.deckButton}
+        >
+          <Text variant="caption" tone="muted" maxFontSizeMultiplier={layout.fixedBoxFontScale}>
+            {es.game.deck(run.drawPile.length)}
+          </Text>
+        </Pressable>
       </View>
       <View style={styles.hand}>
         <HandFan
@@ -267,6 +277,7 @@ export function GameScreen({ run }: { run: RunState }) {
       )}
       <JokerDetailSheet joker={detail} onClose={() => setDetailId(null)} />
       <HandLevelsSheet visible={levelsOpen} run={run} onClose={() => setLevelsOpen(false)} />
+      <DeckSheet visible={deckOpen} run={run} onClose={() => setDeckOpen(false)} />
       <ConsumableSheet
         run={run}
         instanceId={consumableId}
@@ -292,6 +303,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.gutter,
   },
   sort: { flexDirection: 'row' },
+  // The "Mazo 36" counter is a button: the full touch height, the same width as a tray slot.
+  deckButton: {
+    minHeight: touchTarget,
+    minWidth: layout.consumableSlot.minWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sortItem: {
     minHeight: 36,
     minWidth: 56,
