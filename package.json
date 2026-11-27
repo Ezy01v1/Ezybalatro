@@ -11,7 +11,7 @@
     "dev:mobile": "pnpm --filter @naipes/mobile start",
     "dev:server": "pnpm build:packages && pnpm --filter @naipes/server start:dev",
     "build": "pnpm build:packages && pnpm --filter @naipes/server build",
-    "lint": "pnpm -r lint",
+    "lint": "pnpm build:packages && pnpm -r lint",
     "typecheck": "pnpm build:packages && pnpm -r typecheck",
     "test": "pnpm build:packages && pnpm -r test",
     "test:engine": "pnpm --filter @naipes/engine test",
