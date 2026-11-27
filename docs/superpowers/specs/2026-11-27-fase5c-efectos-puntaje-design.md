@@ -1,6 +1,6 @@
 # Fase 5c — Efectos de carta y puntaje (diseño)
 
-Fecha: 2026-11-27 · Estado: **propuesto, pendiente de aprobación del usuario** · Base: [diseño de la Fase 5](2026-11-24-fase5-roguelike-profundidad-design.md) §5c · ADR: [0010](../../decisions/0010-puntaje-repeticiones-azar-ediciones.md)
+Fecha: 2026-11-27 · Estado: **aprobado por el usuario el 2026-11-27 (con las precisiones de §10)** · Base: [diseño de la Fase 5](2026-11-24-fase5-roguelike-profundidad-design.md) §5c · ADR: [0010](../../decisions/0010-puntaje-repeticiones-azar-ediciones.md)
 
 > El usuario dejó las decisiones a Claude ("toma las mejores decisiones para el proyecto") antes de irse a probar la 5b en el teléfono. Todo lo marcado **[mi decisión]** es una propuesta de Claude. No se escribe código hasta que apruebes este documento y el ADR.
 
@@ -50,7 +50,7 @@ Hoy el puntaje es una suma predecible: cada carta y cada comodín actúan una ve
 Propiedades `fast-check`: misma semilla + acciones ⇒ mismo estado final y mismo `steps` (con `rng.score`); el tope de repeticiones nunca se supera; sin `rng`, `roll` siempre `false`. Unitarias: orden de evaluación con repeticiones; edición aplicada una vez; comprar un comodín con edición lo conserva; vender paga el valor correcto; ediciones `ample` suman espacio. Móvil: el escenario muestra los pasos nuevos; el riel marca la edición; accesibilidad del rótulo.
 
 ## 7. Review focus (lo que el plan debe cubrir)
-1. Semilla fija + `E2E-9` de Maestro: la oferta 0 de la tienda **no** cambia (la edición se tira después y no mueve `shop` antes de la oferta).
+1. Las ediciones no cambian qué cartas se ofrecen en una visita (misma semilla con y sin ediciones: mismos ids). La oferta 0 de `E2E-9` sí cambia al crecer el catálogo (ver §10) y el flujo de Maestro solo necesita que sea un comodín comprable.
 2. Una carta con mejora que repite y un comodín `onCardScored` + `retriggers` a la vez.
 3. `roll` sin `rng` o con denominador 0 / negativo.
 4. Vender un comodín con edición y 5/5 de espacios con `ample`.
@@ -58,6 +58,13 @@ Propiedades `fast-check`: misma semilla + acciones ⇒ mismo estado final y mism
 
 ## 8. A criterio de quien construya
 Nombres definitivos en español (comodines, ediciones, mejora "Moneda"); valores exactos (probabilidades, sobreprecio, bonos) — los ajusta el simulador en 5f; microcopia de los rótulos en el escenario.
+
+## 10. Precisiones al ejecutar (decididas al escribir el plan)
+1. La edición se tira **al final de `rollOffers`**, no "después de elegir cada comodín": así las 4 primeras ofertas de una visita no cambian.
+2. El 12 % es `editionOneIn: 8` (12,5 %) en la config.
+3. Las tiradas falladas no generan paso.
+4. "Chispa": 1 en 3 por carta que puntúa, +3 mult.
+5. Con el catálogo de 27 comodines cambia la oferta 0 de `E2E-9` (ahora `last_encore`, $6); el flujo de Maestro sigue valiendo y `find-e2e-seed.mjs` exige además una oferta 0 comprable.
 
 ## 9. Preguntas abiertas (del usuario)
 1. ¿Te parece bien dejar las **ediciones de carta** para después (aquí solo comodines)?

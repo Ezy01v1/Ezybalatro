@@ -1,5 +1,5 @@
 # 0010. Puntaje del roguelike: repeticiones, azar y ediciones
-Estado: Propuesto (pendiente de aprobación del usuario)
+Estado: Aceptado (2026-11-27, aprobado por el usuario)
 Fecha: 2026-11-27
 
 ## Contexto
@@ -10,7 +10,8 @@ Fecha: 2026-11-27
 2. **Repeticiones como gancho opcional.** `JokerDefinition.retriggers?(self, ctx, card): number` y `EnhancementDefinition.retriggers?(card, ctx): number` devuelven cuántas veces extra se repite una carta que puntúa. Solo cartas que puntúan (no las de la mano). Se suman, con **tope duro de 3 repeticiones por carta** (4 veces en total). Una repetición vuelve a ejecutar, en orden: sus fichas, su mejora (`onScored`) y los `onCardScored` de todos los comodines. Los ganchos `retriggers` se evalúan una vez por carta, antes de puntuarla, así que una repetición no puede generar más repeticiones (sin bucles).
 3. **Ediciones de comodín como datos.** `JokerInstance.edition?: string` y `EditionDefinition { id, effect?: Effect, extraJokerSlots?: number }` en el contenido. El efecto de la edición se aplica **una vez por mano**, en el momento de `onHandScored` de ese comodín (justo después de su efecto propio, o solo, si no tiene ese gancho), siguiendo el orden de izquierda a derecha, para que los números sean legibles. Una edición con `extraJokerSlots` suma espacios a la config mientras el comodín esté en el riel (se calcula al leer, no se guarda en la config).
 4. **Contrato de pasos.** `ScoreSource` gana: `card` con `repeat: number` (0 = la primera vez) y `enhancement` con `repeat`; los comodines con `repeat` en `onCardScored`; y un `joker` con `hook: 'edition'`. La UI y `playback.ts` solo añaden etiquetas; no calculan reglas.
-5. **Guardado:** `RUN_STATE_VERSION` pasa a 4 (las runs guardadas viejas se descartan, como en la 5a y la 5b).
+5. **Ediciones en la tienda:** se tiran al final de `rollOffers`, después de todas las demás tiradas de la visita, con `RunConfig.editionOneIn` (1 de cada 8 ofertas de comodín; 0 las desactiva). Así las ofertas de una visita no cambian por las ediciones. Los comodines de sobre no traen edición. Las tiradas falladas de `roll` no generan paso.
+6. **Guardado:** `RUN_STATE_VERSION` pasa a 4 (las runs guardadas viejas se descartan, como en la 5a y la 5b).
 
 ## Alternativas descartadas
 - **`Math.random` o RNG global en los ganchos:** rompe el engine puro y la reproducibilidad (invariante 5 y 6 de `CLAUDE.md`).
@@ -21,7 +22,7 @@ Fecha: 2026-11-27
 ## Consecuencias
 - Un comodín de repetición o de suerte es una entrada nueva en `content.ts`; el puntaje no tiene `if` por id.
 - El simulador y la propiedad `fast-check` de la run deben cubrir `rng.score` (misma semilla, mismo resultado; el log reproduce el estado final).
-- El contenido de azar vuelve el puntaje no analítico: la UI debe mostrar qué tiradas salieron (un paso por tirada acertada; las falladas se anotan en el paso).
+- El contenido de azar vuelve el puntaje no analítico: la UI muestra las tiradas acertadas (un paso por cada una); las falladas no generan paso.
 - Cambiar el orden de evaluación del puntaje cambia el resultado de las semillas existentes; aceptable antes de publicar.
 
 ## Disparador para revisar
