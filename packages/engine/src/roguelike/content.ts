@@ -6,6 +6,8 @@ import type {
   HandTypeStats,
   JokerDefinition,
   RunContent,
+  PackDefinition,
+  VoucherDefinition,
 } from './types';
 import { HAND_CATEGORIES, type HandCategory } from '../hands/hand-category';
 
@@ -292,10 +294,41 @@ export const BOSSES: readonly BossDefinition[] = [
   { id: 'mask', debuffRanks: [11, 12, 13] },
 ];
 
+/**
+ * The 3 MVP packs. Each opens at once when bought; `kind` says what the options are. Comments:
+ * proposed es-419 name.
+ */
+export const PACKS: readonly PackDefinition[] = [
+  // "Sobre de Comodines": 3 jokers, take 1.
+  { id: 'pack_joker', cost: 6, kind: 'joker', size: 3, picks: 1 },
+  // "Sobre de Consumibles": 3 consumables, take 1.
+  { id: 'pack_consumable', cost: 4, kind: 'consumable', size: 3, picks: 1 },
+  // "Sobre de Cartas": 3 new enhanced cards for the deck, take 1.
+  { id: 'pack_card', cost: 5, kind: 'card', size: 3, picks: 1 },
+];
+
+/** The 6 MVP vouchers: permanent rule changes, one offered per shop, never repeated. */
+export const VOUCHERS: readonly VoucherDefinition[] = [
+  // "Mano Extra": +1 hand per blind (from the next blind).
+  { id: 'extra_hand', cost: 10, modifiers: [{ key: 'hands', delta: 1 }] },
+  // "Descarte Extra": +1 discard per blind (from the next blind).
+  { id: 'extra_discard', cost: 8, modifiers: [{ key: 'discards', delta: 1 }] },
+  // "Palco de Comodines": +1 joker slot.
+  { id: 'joker_slot', cost: 10, modifiers: [{ key: 'jokerSlots', delta: 1 }] },
+  // "Bolsillo Extra": +1 consumable slot.
+  { id: 'consumable_slot', cost: 6, modifiers: [{ key: 'consumableSlots', delta: 1 }] },
+  // "Renovación Barata": rerolls cost $1 less.
+  { id: 'cheap_reroll', cost: 6, modifiers: [{ key: 'rerollBaseCost', delta: -1 }] },
+  // "Banca Generosa": interest cap +$1.
+  { id: 'interest_cap', cost: 8, modifiers: [{ key: 'interestCap', delta: 1 }] },
+];
+
 export const DEFAULT_CONTENT: RunContent = {
   jokers: JOKERS,
   enhancements: ENHANCEMENTS,
   bosses: BOSSES,
   consumables: CONSUMABLES,
+  packs: PACKS,
+  vouchers: VOUCHERS,
   handTypes: HAND_TYPES,
 };

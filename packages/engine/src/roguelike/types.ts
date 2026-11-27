@@ -114,6 +114,51 @@ export interface ConsumableInstance {
   readonly consumableId: string;
 }
 
+/** Config numbers a voucher can change (the key is the `RunConfig` field it adds to). */
+export type ModifiableConfigKey =
+  | 'hands'
+  | 'discards'
+  | 'jokerSlots'
+  | 'consumableSlots'
+  | 'rerollBaseCost'
+  | 'interestCap';
+
+export interface ConfigModifier {
+  readonly key: ModifiableConfigKey;
+  readonly delta: number;
+}
+
+/** A permanent rule change bought in the shop: it only adds `delta`s to the run's config. */
+export interface VoucherDefinition {
+  readonly id: string;
+  /** Shop price. */
+  readonly cost: number;
+  readonly modifiers: readonly ConfigModifier[];
+}
+
+export type PackKind = 'joker' | 'consumable' | 'card';
+
+/** A pack bought in the shop: opens at once, `size` options are shown and `picks` can be taken. */
+export interface PackDefinition {
+  readonly id: string;
+  /** Shop price. */
+  readonly cost: number;
+  readonly kind: PackKind;
+  readonly size: number;
+  readonly picks: number;
+}
+
+/** One option inside an open pack. A card gets its id only when it is picked. */
+export type PackItem =
+  | { readonly kind: 'joker'; readonly jokerId: string }
+  | { readonly kind: 'consumable'; readonly consumableId: string }
+  | {
+      readonly kind: 'card';
+      readonly suit: Suit;
+      readonly rank: Rank;
+      readonly enhancement: string;
+    };
+
 export type BlindKind = 'small' | 'big' | 'boss';
 
 /** Boss rule as data. */
@@ -143,5 +188,7 @@ export interface RunContent {
   readonly enhancements: readonly EnhancementDefinition[];
   readonly bosses: readonly BossDefinition[];
   readonly consumables: readonly ConsumableDefinition[];
+  readonly packs: readonly PackDefinition[];
+  readonly vouchers: readonly VoucherDefinition[];
   readonly handTypes: Readonly<Record<HandCategory, HandTypeStats>>;
 }

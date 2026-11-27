@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HAND_CATEGORIES } from '../hands/hand-category';
-import { CONSUMABLES, DEFAULT_CONTENT, ENHANCEMENTS } from './content';
+import { CONSUMABLES, DEFAULT_CONTENT, ENHANCEMENTS, PACKS, VOUCHERS } from './content';
 
 const CARD_OPS = ['enhanceCards', 'changeSuit', 'shiftRank', 'destroyCards', 'duplicateCard'];
 
@@ -112,5 +112,52 @@ describe('consumables content', () => {
 
   it('is wired into DEFAULT_CONTENT', () => {
     expect(DEFAULT_CONTENT.consumables).toBe(CONSUMABLES);
+  });
+});
+
+describe('packs content', () => {
+  it('has the 3 MVP packs with their ids, kinds and costs', () => {
+    expect(PACKS.map((p) => [p.id, p.kind, p.cost, p.size, p.picks])).toEqual([
+      ['pack_joker', 'joker', 6, 3, 1],
+      ['pack_consumable', 'consumable', 4, 3, 1],
+      ['pack_card', 'card', 5, 3, 1],
+    ]);
+  });
+
+  it('has unique ids and picks within the size', () => {
+    expect(new Set(PACKS.map((p) => p.id)).size).toBe(PACKS.length);
+    for (const p of PACKS) {
+      expect(p.picks).toBeGreaterThanOrEqual(1);
+      expect(p.size).toBeGreaterThanOrEqual(p.picks);
+    }
+  });
+
+  it('is wired into DEFAULT_CONTENT', () => {
+    expect(DEFAULT_CONTENT.packs).toBe(PACKS);
+  });
+});
+
+describe('vouchers content', () => {
+  it('has the 6 MVP vouchers with their ids, costs and modifiers', () => {
+    expect(VOUCHERS.map((v) => [v.id, v.cost, v.modifiers])).toEqual([
+      ['extra_hand', 10, [{ key: 'hands', delta: 1 }]],
+      ['extra_discard', 8, [{ key: 'discards', delta: 1 }]],
+      ['joker_slot', 10, [{ key: 'jokerSlots', delta: 1 }]],
+      ['consumable_slot', 6, [{ key: 'consumableSlots', delta: 1 }]],
+      ['cheap_reroll', 6, [{ key: 'rerollBaseCost', delta: -1 }]],
+      ['interest_cap', 8, [{ key: 'interestCap', delta: 1 }]],
+    ]);
+  });
+
+  it('has unique ids and non-empty, non-zero modifiers', () => {
+    expect(new Set(VOUCHERS.map((v) => v.id)).size).toBe(VOUCHERS.length);
+    for (const v of VOUCHERS) {
+      expect(v.modifiers.length).toBeGreaterThanOrEqual(1);
+      for (const m of v.modifiers) expect(m.delta).not.toBe(0);
+    }
+  });
+
+  it('is wired into DEFAULT_CONTENT', () => {
+    expect(DEFAULT_CONTENT.vouchers).toBe(VOUCHERS);
   });
 });

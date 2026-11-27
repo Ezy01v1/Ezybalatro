@@ -42,6 +42,8 @@ export {
   ENHANCEMENTS,
   HAND_TYPES,
   JOKERS,
+  PACKS,
+  VOUCHERS,
 } from './roguelike/content';
 export type { ScoreInput, ScoreResult, ScoreSource, ScoreStep } from './roguelike/scoring';
 export { handBase, scoreHand } from './roguelike/scoring';
