@@ -3,6 +3,14 @@ import { HAND_CATEGORIES, type HandCategory, type Rank, type Suit } from '@naipe
 // Suit characters inside text carry U+FE0E (text presentation): without it Android draws ♥ and ♦
 // with the red color-emoji font. Cards use SVG suits (SuitIcon) instead of text.
 
+/** "Choose N cards" copy, shared by the picking panel and the engine-error text. */
+const pickCards = (min: number, max: number) =>
+  min === max
+    ? `Elige ${max} ${max === 1 ? 'carta' : 'cartas'}`
+    : min === 1
+      ? `Elige hasta ${max} cartas`
+      : `Elige de ${min} a ${max} cartas`;
+
 /** All user-facing strings live here (es-419) so they can be translated later. */
 export const es = {
   appName: 'Naipes',
@@ -218,12 +226,7 @@ export const es = {
     studyUsed: (hand: string, level: number) => `${hand} sube al nivel ${level}`,
     sold: (n: number) => `Vendido por $${n}`,
     targeting: {
-      pick: (min: number, max: number) =>
-        min === max
-          ? `Elige ${max} ${max === 1 ? 'carta' : 'cartas'}`
-          : min === 1
-            ? `Elige hasta ${max} cartas`
-            : `Elige de ${min} a ${max} cartas`,
+      pick: pickCards,
       limit: (max: number) => `Solo puedes elegir ${max}`,
       minHint: (min: number) => `Elige al menos ${min} ${min === 1 ? 'carta' : 'cartas'}`,
       panelA11y: (name: string, n: number, max: number) =>
@@ -235,13 +238,11 @@ export const es = {
     },
     errors: {
       noSlot: 'No hay espacio para otro consumible',
-      pickBetween: (min: number, max: number) =>
-        min === max
-          ? `Elige ${max} ${max === 1 ? 'carta' : 'cartas'}`
-          : `Elige entre ${min} y ${max} cartas`,
+      pickBetween: pickCards,
       invalidCards: 'Esas cartas no sirven para esto. Prueba con otras.',
       elevateAce: 'El As ya no puede subir.',
       scrapMin: (n: number) => `Tu mazo no puede tener menos de ${n} cartas.`,
+      wouldEmptyHand: 'Te quedarías sin cartas en la mano.',
       invalidConsumable: 'Ese consumible ya no está disponible.',
       invalidPhase: 'Elige esto en una ciega',
       generic: 'No se pudo usar. Inténtalo de nuevo.',

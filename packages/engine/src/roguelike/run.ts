@@ -153,6 +153,7 @@ export type RunErrorCode =
   | 'RUN_OVER'
   | 'INVALID_PHASE'
   | 'INVALID_CARDS'
+  | 'WOULD_EMPTY_HAND'
   | 'NO_DISCARDS_LEFT'
   | 'INVALID_OFFER'
   | 'NOT_ENOUGH_MONEY'
@@ -428,11 +429,8 @@ function play(
     winRound(d, content, events);
   } else {
     draw(d, events);
-    if (d.handsLeft === 0 || d.hand.length === 0) {
-      d.status = 'lost';
-      d.phase = 'ended';
-      events.push({ type: 'runLost' });
-    }
+    if (d.handsLeft === 0) loseRun(d, events);
+    else loseIfNoCards(d, events);
   }
   return null;
 }
@@ -458,6 +456,7 @@ function discard(
     def.onDiscard?.(self, { discarded, money: d.money }),
   );
   draw(d, events);
+  loseIfNoCards(d, events);
   return null;
 }
 
@@ -526,6 +525,17 @@ function draw(d: Draft, events: RunEvent[]): void {
   const drawn = d.drawPile.splice(0, Math.max(0, d.handSize - d.hand.length));
   d.hand.push(...drawn);
   if (drawn.length > 0) events.push({ type: 'cardsDrawn', cardIds: drawn.map((c) => c.id) });
+}
+
+function loseRun(d: Draft, events: RunEvent[]): void {
+  d.status = 'lost';
+  d.phase = 'ended';
+  events.push({ type: 'runLost' });
+}
+
+/** Call right after `draw`: an empty hand with nothing left to draw can never play again. */
+function loseIfNoCards(d: Draft, events: RunEvent[]): void {
+  if (d.hand.length === 0) loseRun(d, events);
 }
 
 /** The hand cards for `cardIds`, in that order, or null if the selection is invalid. */
@@ -748,6 +758,9 @@ function destroyCards(d: Draft, ids: readonly string[], events: RunEvent[]): Run
   if (d.deck.length - ids.length < d.config.minDeckSize)
     return err('INVALID_CARDS', `The deck cannot go below ${d.config.minDeckSize} cards`);
   const gone = new Set(ids);
+  const kept = d.hand.filter((c) => !gone.has(c.id)).length;
+  if (kept + Math.min(d.drawPile.length, Math.max(0, d.handSize - kept)) === 0)
+    return err('WOULD_EMPTY_HAND', 'Destroying these cards would leave your hand empty');
   d.hand = d.hand.filter((c) => !gone.has(c.id));
   d.deck = d.deck.filter((c) => !gone.has(c.id));
   draw(d, events);

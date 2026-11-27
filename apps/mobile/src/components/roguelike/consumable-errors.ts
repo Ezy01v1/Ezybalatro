@@ -17,6 +17,8 @@ export function consumableErrorText(
       return t.noSlot;
     case 'INVALID_PHASE':
       return t.invalidPhase;
+    case 'WOULD_EMPTY_HAND':
+      return t.wouldEmptyHand;
     case 'INVALID_CONSUMABLE':
       return t.invalidConsumable;
     case 'INVALID_CARDS': {

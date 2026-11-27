@@ -121,6 +121,25 @@ describe('playing and discarding', () => {
     expect(errorOf(state, { type: 'abandon' })).toBe('RUN_OVER');
   });
 
+  it('discarding the last cards of the hand with nothing left to draw ends the run as lost', () => {
+    const s0 = createRun('lock').state;
+    const deck = s0.deck.slice(0, 30);
+    const stuck: RunState = {
+      ...s0,
+      deck,
+      drawPile: [],
+      hand: deck.slice(0, 3),
+      handsLeft: 2,
+      discardsLeft: 1,
+    };
+    const { state, events } = act(stuck, { type: 'discard', cardIds: stuck.hand.map((c) => c.id) });
+    expect([state.status, state.phase, state.hand.length]).toEqual(['lost', 'ended', 0]);
+    expect(events.at(-1)).toEqual({ type: 'runLost' });
+    // A discard that still leaves cards in hand keeps the run going.
+    const fine = act(stuck, { type: 'discard', cardIds: [stuck.hand[0]!.id] }).state;
+    expect(fine.status).toBe('in_progress');
+  });
+
   it('abandoning ends the run', () => {
     const { state } = act(createRun('seed').state, { type: 'abandon' });
     expect(state.status).toBe('abandoned');
@@ -761,6 +780,23 @@ describe('applying and selling consumables', () => {
       expect(JSON.stringify(tight)).toBe(before);
       // One card still fits (52 - 1 = 51).
       expect(act(tight, use('c1', tight.hand[0]!.id)).state.deck).toHaveLength(51);
+    });
+
+    /** A thinned deck whose draw pile is already empty and with few cards left in hand. */
+    const dryHand = (state: RunState, inHand: number): RunState => {
+      const deck = state.deck.slice(0, 30);
+      return { ...state, deck, drawPile: [], hand: deck.slice(0, inHand), handsLeft: 2 };
+    };
+
+    it('scrap is refused with WOULD_EMPTY_HAND when it would leave the hand empty, changing nothing', () => {
+      const base = deepFreeze(inventory(dryHand(inBlind(), 2), 'scrap'));
+      const before = JSON.stringify(base);
+      expect(errorCode(base, use('c1', ...base.hand.map((c) => c.id)))).toBe('WOULD_EMPTY_HAND');
+      expect(JSON.stringify(base)).toBe(before);
+      // One card still leaves a card in hand.
+      const { state } = act(base, use('c1', base.hand[0]!.id));
+      expect(state.hand).toHaveLength(1);
+      expect(state.status).toBe('in_progress');
     });
 
     it('destroying the whole hand deals a completely new one', () => {

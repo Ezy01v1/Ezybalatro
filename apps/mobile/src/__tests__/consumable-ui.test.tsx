@@ -411,6 +411,24 @@ describe('blind: card-picking mode', () => {
     expect(useGame.getState().targeting).toBeNull();
   });
 
+  it('refuses a scrap that would leave the hand empty, with its own message', async () => {
+    startBlind('scrap');
+    const start = useGame.getState().run!;
+    const hand = start.hand.slice(0, 2);
+    useGame.setState({ run: { ...start, drawPile: [], hand } });
+    await render(<ConnectedGame />);
+    await useFirst();
+    await press(`card-${hand[0]!.id}`);
+    await press(`card-${hand[1]!.id}`);
+    await press('targeting-apply');
+    await press('targeting-apply');
+    expect(screen.getByTestId('targeting-hint')).toHaveTextContent(
+      contains('Te quedarías sin cartas en la mano.'),
+    );
+    expect(useGame.getState().run!.consumables).toHaveLength(1);
+    expect(useGame.getState().run!.hand).toHaveLength(2);
+  });
+
   it('a consumable without destroy applies with one tap', async () => {
     startBlind('reinforce');
     await render(<ConnectedGame />);
