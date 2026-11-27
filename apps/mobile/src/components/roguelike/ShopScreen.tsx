@@ -1,10 +1,23 @@
-import { findConsumable, jokerSellValue, type RunState, type ShopOffer } from '@naipes/engine';
+import {
+  DEFAULT_CONTENT,
+  findConsumable,
+  jokerSellValue,
+  type RunState,
+  type ShopOffer,
+} from '@naipes/engine';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { playSound } from '@/feedback/feedback';
 import { formatMoney } from '@/game/format';
 import { useGame } from '@/game/store';
-import { BOSS_TEXTS, CONSUMABLE_TEXTS, es, JOKER_TEXTS } from '@/i18n/es';
+import {
+  BOSS_TEXTS,
+  CONSUMABLE_TEXTS,
+  es,
+  JOKER_TEXTS,
+  PACK_TEXTS,
+  VOUCHER_TEXTS,
+} from '@/i18n/es';
 import { colors, layout, radii, spacing } from '@/theme/tokens';
 import { Notice } from '@/ui/Notice';
 import { Button, DecoRule, Screen, Text } from '@/ui/primitives';
@@ -15,9 +28,65 @@ import { ConsumableTray } from './ConsumableTray';
 import { DeckSheet } from './DeckSheet';
 import { JokerDetailSheet } from './JokerDetailSheet';
 import { JokerRail } from './JokerRail';
+import { OfferRow } from './OfferRow';
+import { VoucherPills } from './VoucherPills';
 
-// Packs and vouchers get their own cards (see the shop sections task); until then only these two.
 type BasicOffer = Extract<ShopOffer, { kind: 'joker' | 'consumable' }>;
+
+type LootOffer = Extract<ShopOffer, { kind: 'pack' | 'voucher' }>;
+
+/** Compact row of a pack or the voucher. The engine decides; this only explains what is missing. */
+function LootRow({
+  offer,
+  index,
+  run,
+  onBuy,
+}: {
+  offer: LootOffer;
+  index: number;
+  run: RunState;
+  onBuy: (index: number) => void;
+}) {
+  const isPack = offer.kind === 'pack';
+  const packDef = isPack ? DEFAULT_CONTENT.packs.find((p) => p.id === offer.packId) : undefined;
+  let text: { name: string; description: string };
+  let line2: string;
+  if (offer.kind === 'pack') {
+    text = PACK_TEXTS[offer.packId] ?? { name: offer.packId, description: '' };
+    line2 = packDef ? es.shop.packPick(packDef.size, packDef.picks) : '';
+  } else {
+    const voucher = VOUCHER_TEXTS[offer.voucherId];
+    text = voucher ?? { name: offer.voucherId, description: '' };
+    line2 = voucher?.short ?? offer.voucherId;
+  }
+  const noRoom =
+    (packDef?.kind === 'joker' && run.jokers.length >= run.config.jokerSlots
+      ? es.shop.noJokerSlot
+      : null) ??
+    (packDef?.kind === 'consumable' && run.consumables.length >= run.config.consumableSlots
+      ? es.shop.noConsumableSlot
+      : null);
+  const missing = offer.price - run.money;
+  const status = offer.sold
+    ? es.shop.bought
+    : (noRoom ?? (missing > 0 ? es.shop.missing(missing) : null));
+  return (
+    <OfferRow
+      index={index}
+      title={text.name}
+      line2={line2}
+      description={text.description}
+      status={offer.sold ? null : status}
+      statusTone="danger"
+      price={offer.price}
+      sold={offer.sold}
+      inactive={!!status}
+      emphasis={isPack ? undefined : 'voucher'}
+      buyLabel={es.shop.buyA11y(text.name, offer.price)}
+      onBuy={() => onBuy(index)}
+    />
+  );
+}
 
 function OfferCard({
   offer,
@@ -99,14 +168,35 @@ export function ShopScreen({ run }: { run: RunState }) {
   const [notice, showNotice] = useTransientNotice();
 
   const onBuy = (index: number) => {
+    const offer = run.shop[index];
     const code = buy(index);
-    if (code === null) playSound('coin');
-    else if (code === 'NO_CONSUMABLE_SLOT') showNotice(es.consumables.errors.noSlot);
+    if (code === null) {
+      playSound(offer?.kind === 'pack' ? 'deal' : 'coin');
+      if (offer?.kind === 'voucher')
+        showNotice(es.shop.voucherBought(VOUCHER_TEXTS[offer.voucherId]?.short ?? offer.voucherId));
+    } else if (code === 'NO_JOKER_SLOT') showNotice(es.shop.noJokerSlot);
+    else if (code === 'NO_CONSUMABLE_SLOT')
+      showNotice(offer?.kind === 'pack' ? es.shop.noConsumableSlot : es.consumables.errors.noSlot);
   };
   // Grouped on screen; the index (and test ids) stay the position in run.shop.
   const offers = run.shop.flatMap((offer, index) =>
     offer.kind === 'joker' || offer.kind === 'consumable' ? [{ offer, index }] : [],
   );
+  const lootOffers = run.shop.flatMap((offer, index) =>
+    offer.kind === 'pack' || offer.kind === 'voucher' ? [{ offer, index }] : [],
+  );
+  const packOffers = lootOffers.filter((o) => o.offer.kind === 'pack');
+  const voucherOffers = lootOffers.filter((o) => o.offer.kind === 'voucher');
+  const renderLoot = (list: typeof lootOffers) =>
+    list.map(({ offer, index }) => (
+      <LootRow
+        key={`${index}-${offer.kind === 'pack' ? offer.packId : offer.voucherId}`}
+        offer={offer}
+        index={index}
+        run={run}
+        onBuy={onBuy}
+      />
+    ));
   const jokerOffers = offers.filter((o) => o.offer.kind === 'joker');
   const consumableOffers = offers.filter((o) => o.offer.kind === 'consumable');
   const renderOffers = (list: typeof offers) =>
@@ -173,13 +263,35 @@ export function ShopScreen({ run }: { run: RunState }) {
             {renderOffers(consumableOffers)}
           </>
         ) : null}
-        <Button
-          testID="reroll-button"
-          variant="secondary"
-          label={es.shop.reroll(run.rerollCost)}
-          inactive={run.money < run.rerollCost}
-          onPress={run.money < run.rerollCost ? undefined : () => reroll()}
-        />
+        <View style={styles.rerollRow}>
+          <Button
+            testID="reroll-button"
+            variant="secondary"
+            label={es.shop.reroll(run.rerollCost)}
+            inactive={run.money < run.rerollCost}
+            onPress={run.money < run.rerollCost ? undefined : () => reroll()}
+          />
+          <Text variant="caption" tone="muted">
+            {es.shop.rerollScope}
+          </Text>
+        </View>
+        {packOffers.length > 0 ? (
+          <>
+            <Text variant="caption" tone="muted" accessibilityRole="header">
+              {es.shop.packs}
+            </Text>
+            {renderLoot(packOffers)}
+          </>
+        ) : null}
+        {voucherOffers.length > 0 ? (
+          <>
+            <Text variant="caption" tone="muted" accessibilityRole="header">
+              {es.shop.voucher}
+            </Text>
+            {renderLoot(voucherOffers)}
+          </>
+        ) : null}
+        <VoucherPills voucherIds={run.vouchers} />
       </ScrollView>
       <View style={styles.footer}>
         <Button
@@ -244,6 +356,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   offerSold: { opacity: 0.55 },
+  rerollRow: { gap: spacing.xs },
   trayHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   // Reserved so the notice never makes the offers jump.
   noticeSlot: { minHeight: spacing.xl, justifyContent: 'center' },

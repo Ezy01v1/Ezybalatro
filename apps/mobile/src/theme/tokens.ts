@@ -78,6 +78,12 @@ export const layout = {
   consumableSlot: { minWidth: 56, height: 48, heightWide: 56 },
   /** Tile of a card in the deck viewer. */
   deckTile: { width: 36, height: 50, suitSize: 12 },
+  /** Thumbnail of an option in the pack sheet. */
+  packThumb: { width: 52, height: 72 },
+  /** Two-line buy button of the compact offer rows. */
+  priceButton: { minWidth: 80 },
+  /** An option row of the pack sheet. */
+  packRow: { minHeight: 80 },
   /** Cards and other fixed-size boxes cap text scaling so they do not overflow. */
   fixedBoxFontScale: 1.2,
 } as const;
