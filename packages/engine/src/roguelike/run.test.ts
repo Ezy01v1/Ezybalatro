@@ -8,6 +8,7 @@ import {
   hasUniqueIds,
   isCardDebuffed,
   previewPlay,
+  replayRun,
   runReducer,
   type ConsumableDefinition,
   type JokerDefinition,
@@ -901,5 +902,70 @@ describe('applying and selling consumables', () => {
     const over = act(inventory(inBlind(), 'study_pair'), { type: 'abandon' }).state;
     expect(errorCode(over, { type: 'applyConsumable', instanceId: 'c1' })).toBe('RUN_OVER');
     expect(errorCode(over, { type: 'sellConsumable', instanceId: 'c1' })).toBe('RUN_OVER');
+  });
+});
+
+describe('save/load with card-changing consumables', () => {
+  it('keeps playing after a JSON round trip and replays to the same state', () => {
+    // Exactly paint, twin and scrap in the pool, three offers: the shop always sells all three.
+    const content: RunContent = {
+      ...DEFAULT_CONTENT,
+      consumables: DEFAULT_CONTENT.consumables.filter((c) =>
+        ['paint_h', 'twin', 'scrap'].includes(c.id),
+      ),
+    };
+    const config: RunConfig = {
+      ...EASY,
+      startingMoney: 50,
+      consumableSlots: 3,
+      shopConsumableOffers: 3,
+    };
+    const actions: RunAction[] = [];
+    const step = (state: RunState, action: RunAction) => {
+      actions.push(action);
+      return act(state, action, content).state;
+    };
+
+    let state = createRun('save-load', config, content).state;
+    state = step(state, { type: 'play', cardIds: [state.hand[0]!.id] });
+    expect(state.phase).toBe('shop');
+    state.shop.forEach((offer, i) => {
+      if (offer.kind === 'consumable') state = step(state, { type: 'buy', offerIndex: i });
+    });
+    expect(state.consumables.map((c) => c.consumableId).sort()).toEqual([
+      'paint_h',
+      'scrap',
+      'twin',
+    ]);
+    state = step(state, { type: 'leaveShop' });
+
+    const instanceOf = (id: string) =>
+      state.consumables.find((c) => c.consumableId === id)!.instanceId;
+    state = step(state, {
+      type: 'applyConsumable',
+      instanceId: instanceOf('paint_h'),
+      cardIds: [state.hand[0]!.id],
+    });
+    state = step(state, {
+      type: 'applyConsumable',
+      instanceId: instanceOf('twin'),
+      cardIds: [state.hand[1]!.id],
+    });
+    state = step(state, {
+      type: 'applyConsumable',
+      instanceId: instanceOf('scrap'),
+      cardIds: [state.hand[2]!.id],
+    });
+    expect(state.nextCardNumber).toBe(2);
+    expect(state.deck).toHaveLength(52);
+
+    // Save + load, then keep playing from the loaded state.
+    state = JSON.parse(JSON.stringify(state)) as RunState;
+    expect(hasUniqueIds([...state.hand, ...state.drawPile])).toBe(true);
+    state = step(state, { type: 'play', cardIds: [state.hand[0]!.id] });
+    expect(hasUniqueIds([...state.hand, ...state.drawPile])).toBe(true);
+    expect(hasUniqueIds(state.deck)).toBe(true);
+
+    expect(replayRun({ seed: 'save-load', config, actions }, content).state).toEqual(state);
   });
 });
