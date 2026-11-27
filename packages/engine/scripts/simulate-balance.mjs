@@ -9,6 +9,9 @@
  * - Shop: buys affordable jokers while it has slots, and the study consumable (`study_<type>`) for its
  *   most played hand type, using it immediately (it ignores every other consumable). It keeps $5 of
  *   savings for interest when it can, and never rerolls.
+ * - Vouchers and packs (Phase 5b): buys the offered voucher when it leaves $5 of savings (+hand and
+ *   +discard first), then the joker pack (same reserve) and takes its first joker that fits. It
+ *   ignores consumable and card packs.
  *
  * Usage: node packages/engine/scripts/simulate-balance.mjs [--runs 300] [--seed-prefix sim] [--json]
  * (run `pnpm build:packages` first, or use `pnpm sim:balance` from the root).
@@ -112,12 +115,43 @@ function shop(state, stats) {
       state = act(state, { type: 'applyConsumable', instanceId: bought.instanceId });
     }
   }
+  state = shopLoot(state, stats);
   return act(state, { type: 'leaveShop' });
+}
+
+const VOUCHER_FIRST = ['extra_hand', 'extra_discard'];
+
+/** Vouchers first (the preferred ones before the rest), then the joker pack. */
+function shopLoot(state, stats) {
+  const rank = (id) => {
+    const i = VOUCHER_FIRST.indexOf(id);
+    return i === -1 ? VOUCHER_FIRST.length : i;
+  };
+  const voucher = state.shop
+    .map((offer, index) => ({ offer, index }))
+    .filter(({ offer }) => offer.kind === 'voucher' && !offer.sold)
+    .filter(({ offer }) => state.money - offer.price >= 5)
+    .sort((a, b) => rank(a.offer.voucherId) - rank(b.offer.voucherId))[0];
+  if (voucher) {
+    state = act(state, { type: 'buy', offerIndex: voucher.index });
+    stats.vouchers++;
+  }
+  const packIndex = state.shop.findIndex(
+    (offer) => offer.kind === 'pack' && offer.packId === 'pack_joker' && !offer.sold,
+  );
+  const pack = state.shop[packIndex];
+  if (pack && state.jokers.length < state.config.jokerSlots && state.money - pack.price >= 5) {
+    state = act(state, { type: 'buy', offerIndex: packIndex });
+    stats.packs++;
+    const itemIndex = state.openPack.items.findIndex((item) => !item.taken);
+    state = act(state, { type: 'pickFromPack', itemIndex });
+  }
+  return state;
 }
 
 function simulate(seed) {
   let state = createRun(seed).state;
-  const stats = { handTypes: {}, blinds: [], blindBest: 0 };
+  const stats = { handTypes: {}, blinds: [], blindBest: 0, vouchers: 0, packs: 0 };
   let guard = 0;
   while (state.status === 'in_progress') {
     if (++guard > 2000) throw new Error(`Run ${seed} did not finish`);
@@ -159,6 +193,8 @@ for (const r of results) {
   deaths[key] = (deaths[key] ?? 0) + 1;
 }
 const wins = results.filter((r) => r.status === 'won').length;
+const vouchersBought = results.reduce((n, r) => n + r.stats.vouchers, 0);
+const packsOpened = results.reduce((n, r) => n + r.stats.packs, 0);
 const bossFaced = {};
 const bossDeaths = {};
 for (const b of results.flatMap((r) => r.stats.blinds.filter((x) => x.blind === 'boss'))) {
@@ -192,7 +228,17 @@ for (let ante = 1; ante <= DEFAULT_RUN_CONFIG.antes; ante++) {
 if (JSON_OUT) {
   console.log(
     JSON.stringify(
-      { runs: RUNS, wins, medianAnte: median, deaths, bossFaced, bossDeaths, curve },
+      {
+        runs: RUNS,
+        wins,
+        medianAnte: median,
+        vouchersBought,
+        packsOpened,
+        deaths,
+        bossFaced,
+        bossDeaths,
+        curve,
+      },
       null,
       2,
     ),
@@ -202,6 +248,7 @@ if (JSON_OUT) {
   console.log(
     `Runs: ${RUNS} · ganadas: ${wins} (${pct(wins)}) · nivel mediano alcanzado: ${median === 9 ? 'ganó' : median}`,
   );
+  console.log(`Vales comprados: ${vouchersBought} · sobres de comodines abiertos: ${packsOpened}`);
   console.log('\nDónde muere el bot:');
   const order = (k) =>
     k === 'won'
