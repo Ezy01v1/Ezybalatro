@@ -17,6 +17,7 @@ import type {
   PackItem,
   RunCard,
   RunContent,
+  VoucherDefinition,
 } from './types';
 
 /** Numbers only, so a config can be stored with the run and replayed. */
@@ -236,6 +237,7 @@ export type RunEvent =
       readonly nextCost: number;
     }
   | { readonly type: 'bought'; readonly offerIndex: number; readonly money: number }
+  | { readonly type: 'voucherBought'; readonly voucherId: string }
   | { readonly type: 'jokerSold'; readonly instanceId: string; readonly money: number }
   | {
       readonly type: 'consumableUsed';
@@ -662,10 +664,14 @@ function buy(
   const offer = d.shop[offerIndex];
   if (!offer || offer.sold) return err('INVALID_OFFER', 'No such offer');
   if (d.money < offer.price) return err('NOT_ENOUGH_MONEY', 'Not enough money');
-  // Packs and vouchers become buyable in their own tasks.
-  if (offer.kind === 'pack' || offer.kind === 'voucher')
+  if (offer.kind === 'voucher') {
+    const voucher = content.vouchers.find((v) => v.id === offer.voucherId);
+    if (!voucher) return err('INVALID_OFFER', 'Unknown voucher');
+    applyVoucher(d, voucher);
+  } else if (offer.kind === 'pack') {
+    // Packs become buyable in their own task.
     return err('INVALID_OFFER', 'This offer cannot be bought yet');
-  if (offer.kind === 'consumable') {
+  } else if (offer.kind === 'consumable') {
     if (d.consumables.length >= d.config.consumableSlots)
       return err('NO_CONSUMABLE_SLOT', 'All consumable slots are full');
     d.consumables.push({
@@ -685,7 +691,20 @@ function buy(
   d.money -= offer.price;
   d.shop[offerIndex] = { ...offer, sold: true };
   events.push({ type: 'bought', offerIndex, money: d.money });
+  if (offer.kind === 'voucher') events.push({ type: 'voucherBought', voucherId: offer.voucherId });
   return null;
+}
+
+/**
+ * The single interpreter of voucher modifiers: adds each `delta` to its config number (never below
+ * 0) on a new config object. The config in `RunState` is shared with earlier states.
+ */
+function applyVoucher(d: Draft, voucher: VoucherDefinition): void {
+  for (const { key, delta } of voucher.modifiers) {
+    d.config = { ...d.config, [key]: Math.max(0, d.config[key] + delta) };
+    if (key === 'rerollBaseCost') d.rerollCost = Math.max(0, d.rerollCost + delta);
+  }
+  d.vouchers.push(voucher.id);
 }
 
 function reroll(d: Draft, content: RunContent, events: RunEvent[]): RunError | null {

@@ -1069,3 +1069,127 @@ describe('packs and vouchers in the shop', () => {
     expect(state.rng.pack).toBeDefined();
   });
 });
+
+describe('vouchers', () => {
+  const only = (
+    id: string,
+    modifiers?: RunContent['vouchers'][number]['modifiers'],
+  ): RunContent => ({
+    ...DEFAULT_CONTENT,
+    vouchers: DEFAULT_CONTENT.vouchers
+      .filter((v) => v.id === id)
+      .map((v) => (modifiers ? { ...v, modifiers } : v)),
+  });
+  const shopWith = (
+    id: string,
+    config: Partial<RunConfig> = {},
+    modifiers?: Parameters<typeof only>[1],
+  ) => {
+    const content = only(id, modifiers);
+    const created = createRun('vouchers', { ...EASY, startingMoney: 50, ...config }, content).state;
+    return { content, state: playFirst(created, 1, content).state };
+  };
+  const VOUCHER_INDEX = 6;
+  const buyVoucher = (state: RunState, content: RunContent) =>
+    act(state, { type: 'buy', offerIndex: VOUCHER_INDEX }, content);
+
+  it('charges the exact price, marks the offer sold and records the voucher', () => {
+    const { state, content } = shopWith('extra_hand');
+    const bought = buyVoucher(state, content);
+    expect(bought.state.money).toBe(state.money - 10);
+    expect(bought.state.shop[VOUCHER_INDEX]).toMatchObject({ kind: 'voucher', sold: true });
+    expect(bought.state.vouchers).toEqual(['extra_hand']);
+    expect(bought.events.map((e) => e.type)).toEqual(['bought', 'voucherBought']);
+    expect(bought.events[1]).toEqual({ type: 'voucherBought', voucherId: 'extra_hand' });
+  });
+
+  it('extra_hand and extra_discard count from the next blind, not the current one', () => {
+    for (const [id, key, left] of [
+      ['extra_hand', 'hands', 'handsLeft'],
+      ['extra_discard', 'discards', 'discardsLeft'],
+    ] as const) {
+      const { state, content } = shopWith(id);
+      const bought = buyVoucher(state, content).state;
+      expect(bought.config[key]).toBe(DEFAULT_RUN_CONFIG[key] + 1);
+      expect(bought[left]).toBe(state[left]);
+      const next = act(bought, { type: 'leaveShop' }, content).state;
+      expect(next[left]).toBe(DEFAULT_RUN_CONFIG[key] + 1);
+    }
+  });
+
+  it('joker_slot and consumable_slot make room for one more', () => {
+    const jokers = shopWith('joker_slot', { jokerSlots: 1 });
+    const full = act(jokers.state, { type: 'buy', offerIndex: 0 }, jokers.content).state;
+    expect(errorOf(full, { type: 'buy', offerIndex: 1 })).toBe('NO_JOKER_SLOT');
+    const roomy = buyVoucher(full, jokers.content).state;
+    expect(roomy.config.jokerSlots).toBe(2);
+    expect(act(roomy, { type: 'buy', offerIndex: 1 }, jokers.content).state.jokers).toHaveLength(2);
+
+    const items = shopWith('consumable_slot', { consumableSlots: 1 });
+    const filled = act(items.state, { type: 'buy', offerIndex: 2 }, items.content).state;
+    expect(errorOf(filled, { type: 'buy', offerIndex: 3 })).toBe('NO_CONSUMABLE_SLOT');
+    const wider = buyVoucher(filled, items.content).state;
+    expect(wider.config.consumableSlots).toBe(2);
+    expect(
+      act(wider, { type: 'buy', offerIndex: 3 }, items.content).state.consumables,
+    ).toHaveLength(2);
+  });
+
+  it('interest_cap raises the interest paid when a blind is beaten', () => {
+    const interestAfterNextWin = (id: string | null) => {
+      const { state, content } = shopWith(id ?? 'extra_hand');
+      const ready = id ? buyVoucher(state, content).state : state;
+      const playing = act(ready, { type: 'leaveShop' }, content).state;
+      const won = playFirst(playing, 1, content);
+      const paid = won.events.find((e) => e.type === 'roundWon');
+      return paid?.type === 'roundWon' ? paid.interest : -1;
+    };
+    expect(interestAfterNextWin(null)).toBe(DEFAULT_RUN_CONFIG.interestCap);
+    expect(interestAfterNextWin('interest_cap')).toBe(DEFAULT_RUN_CONFIG.interestCap + 1);
+  });
+
+  it('cheap_reroll lowers the base and the current reroll cost, never below 0', () => {
+    const { state, content } = shopWith('cheap_reroll');
+    const cheaper = buyVoucher(state, content).state;
+    expect([cheaper.config.rerollBaseCost, cheaper.rerollCost]).toEqual([2, state.rerollCost - 1]);
+
+    const free = shopWith('cheap_reroll', {}, [{ key: 'rerollBaseCost', delta: -99 }]);
+    const zero = buyVoucher(free.state, free.content).state;
+    expect([zero.config.rerollBaseCost, zero.rerollCost]).toEqual([0, 0]);
+  });
+
+  it('does not mutate the previous config and rejects poor or repeated purchases', () => {
+    const { state, content } = shopWith('extra_hand');
+    const bought = buyVoucher(state, content).state;
+    expect(state.config.hands).toBe(DEFAULT_RUN_CONFIG.hands);
+    expect(bought.config).not.toBe(state.config);
+    expect(errorOf({ ...state, money: 9 }, { type: 'buy', offerIndex: VOUCHER_INDEX })).toBe(
+      'NOT_ENOUGH_MONEY',
+    );
+    const result = runReducer(bought, { type: 'buy', offerIndex: VOUCHER_INDEX }, content);
+    expect(result.ok ? 'ok' : result.error.code).toBe('INVALID_OFFER');
+  });
+
+  it('is reproduced by replayRun', () => {
+    const content = only('extra_hand');
+    const config = { ...EASY, startingMoney: 50 };
+    const first = createRun('vouchers', config, content).state.hand[0]!.id;
+    const actions: RunAction[] = [
+      { type: 'play', cardIds: [first] },
+      { type: 'buy', offerIndex: VOUCHER_INDEX },
+      { type: 'leaveShop' },
+    ];
+    const replayed = replayRun({ seed: 'vouchers', config, actions }, content).state;
+    expect(replayed.config.hands).toBe(DEFAULT_RUN_CONFIG.hands + 1);
+    expect(replayed.vouchers).toEqual(['extra_hand']);
+    expect(replayed.handsLeft).toBe(DEFAULT_RUN_CONFIG.hands + 1);
+  });
+
+  it('never offers a bought voucher again', () => {
+    const { state, content } = shopWith('extra_hand');
+    const bought = buyVoucher(state, content).state;
+    const next = playFirst(act(bought, { type: 'leaveShop' }, content).state, 1, content).state;
+    expect(next.phase).toBe('shop');
+    expect(next.shop.some((o) => o.kind === 'voucher')).toBe(false);
+  });
+});
