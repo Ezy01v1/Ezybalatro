@@ -16,13 +16,16 @@ import { DeckSheet } from './DeckSheet';
 import { JokerDetailSheet } from './JokerDetailSheet';
 import { JokerRail } from './JokerRail';
 
+// Packs and vouchers get their own cards (see the shop sections task); until then only these two.
+type BasicOffer = Extract<ShopOffer, { kind: 'joker' | 'consumable' }>;
+
 function OfferCard({
   offer,
   index,
   run,
   onBuy,
 }: {
-  offer: ShopOffer;
+  offer: BasicOffer;
   index: number;
   run: RunState;
   onBuy: (index: number) => void;
@@ -101,7 +104,9 @@ export function ShopScreen({ run }: { run: RunState }) {
     else if (code === 'NO_CONSUMABLE_SLOT') showNotice(es.consumables.errors.noSlot);
   };
   // Grouped on screen; the index (and test ids) stay the position in run.shop.
-  const offers = run.shop.map((offer, index) => ({ offer, index }));
+  const offers = run.shop.flatMap((offer, index) =>
+    offer.kind === 'joker' || offer.kind === 'consumable' ? [{ offer, index }] : [],
+  );
   const jokerOffers = offers.filter((o) => o.offer.kind === 'joker');
   const consumableOffers = offers.filter((o) => o.offer.kind === 'consumable');
   const renderOffers = (list: typeof offers) =>

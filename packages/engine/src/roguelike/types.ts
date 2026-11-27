@@ -116,12 +116,7 @@ export interface ConsumableInstance {
 
 /** Config numbers a voucher can change (the key is the `RunConfig` field it adds to). */
 export type ModifiableConfigKey =
-  | 'hands'
-  | 'discards'
-  | 'jokerSlots'
-  | 'consumableSlots'
-  | 'rerollBaseCost'
-  | 'interestCap';
+  'hands' | 'discards' | 'jokerSlots' | 'consumableSlots' | 'rerollBaseCost' | 'interestCap';
 
 export interface ConfigModifier {
   readonly key: ModifiableConfigKey;

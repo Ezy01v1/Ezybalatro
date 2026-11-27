@@ -14,6 +14,7 @@ import type {
   JokerDefinition,
   JokerEffect,
   JokerInstance,
+  PackItem,
   RunCard,
   RunContent,
 } from './types';
@@ -44,10 +45,14 @@ export interface RunConfig {
   /** First reroll of a shop visit costs this much; each further reroll costs `rerollCostStep` more. */
   readonly rerollBaseCost: number;
   readonly rerollCostStep: number;
+  /** Distinct packs offered per shop visit. */
+  readonly shopPackOffers: number;
+  /** Vouchers offered per shop visit (never one already bought). */
+  readonly shopVoucherOffers: number;
 }
 
 /** Bumped when the saved shape of `RunState` changes; older saves are discarded. */
-export const RUN_STATE_VERSION = 2;
+export const RUN_STATE_VERSION = 3;
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   antes: 8,
@@ -69,6 +74,8 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   shopConsumableOffers: 2,
   rerollBaseCost: 3,
   rerollCostStep: 1,
+  shopPackOffers: 2,
+  shopVoucherOffers: 1,
 };
 
 export type ShopOffer =
@@ -83,7 +90,26 @@ export type ShopOffer =
       readonly consumableId: string;
       readonly price: number;
       readonly sold: boolean;
+    }
+  | {
+      readonly kind: 'pack';
+      readonly packId: string;
+      readonly price: number;
+      readonly sold: boolean;
+    }
+  | {
+      readonly kind: 'voucher';
+      readonly voucherId: string;
+      readonly price: number;
+      readonly sold: boolean;
     };
+
+/** A pack being opened: the shop is locked until its picks are taken or it is skipped. */
+export interface OpenPack {
+  readonly packId: string;
+  readonly items: readonly (PackItem & { readonly taken: boolean })[];
+  readonly picksLeft: number;
+}
 
 export type RunStatus = 'in_progress' | 'won' | 'lost' | 'abandoned';
 
@@ -111,6 +137,10 @@ export interface RunState {
   readonly money: number;
   readonly jokers: readonly JokerInstance[];
   readonly consumables: readonly ConsumableInstance[];
+  /** Ids of the vouchers bought so far (their modifiers are already in `config`). */
+  readonly vouchers: readonly string[];
+  /** Set while a bought pack is open. */
+  readonly openPack: OpenPack | null;
   readonly handLevels: Readonly<Record<HandCategory, number>>;
   readonly handsPlayed: number;
   readonly bestHandScore: number;
@@ -121,6 +151,8 @@ export interface RunState {
     readonly deck: SeededRngState;
     readonly shop: SeededRngState;
     readonly boss: SeededRngState;
+    /** Packs, vouchers and pack contents: kept apart so `shop` draws never move. */
+    readonly pack: SeededRngState;
   };
   readonly nextJokerNumber: number;
   /** Next consumable instance id is `c<n>`. */
@@ -233,15 +265,21 @@ export interface RunLog {
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 interface Draft extends Omit<
   Mutable<RunState>,
-  'drawPile' | 'hand' | 'jokers' | 'consumables' | 'handLevels' | 'shop' | 'rng'
+  'drawPile' | 'hand' | 'jokers' | 'consumables' | 'vouchers' | 'handLevels' | 'shop' | 'rng'
 > {
   drawPile: RunCard[];
   hand: RunCard[];
   jokers: JokerInstance[];
   consumables: ConsumableInstance[];
+  vouchers: string[];
   handLevels: Record<HandCategory, number>;
   shop: ShopOffer[];
-  rng: { deck: SeededRngState; shop: SeededRngState; boss: SeededRngState };
+  rng: {
+    deck: SeededRngState;
+    shop: SeededRngState;
+    boss: SeededRngState;
+    pack: SeededRngState;
+  };
 }
 
 const BLIND_ORDER: readonly BlindKind[] = ['small', 'big', 'boss'];
@@ -274,6 +312,8 @@ export function createRun(
     money: config.startingMoney,
     jokers: [],
     consumables: [],
+    vouchers: [],
+    openPack: null,
     handLevels: Object.fromEntries(HAND_CATEGORIES.map((h) => [h, 1])) as Record<
       HandCategory,
       number
@@ -286,6 +326,7 @@ export function createRun(
       deck: SeededRng.fromSeed(seed, 'deck').getState(),
       shop: SeededRng.fromSeed(seed, 'shop').getState(),
       boss: SeededRng.fromSeed(seed, 'boss').getState(),
+      pack: SeededRng.fromSeed(seed, 'pack').getState(),
     },
     nextJokerNumber: 1,
     nextConsumableNumber: 1,
@@ -579,8 +620,29 @@ function rollOffers(d: Draft, content: RunContent): ShopOffer[] {
   return offers;
 }
 
+/**
+ * Distinct packs, then vouchers not bought yet, from the pack sub-stream. Rolled once per shop
+ * visit: a reroll keeps them.
+ */
+function rollLootOffers(d: Draft, content: RunContent): ShopOffer[] {
+  const rng = new SeededRng(d.rng.pack);
+  const offers: ShopOffer[] = [];
+  const packPool = [...content.packs];
+  for (let i = 0; i < d.config.shopPackOffers && packPool.length > 0; i++) {
+    const [pack] = packPool.splice(nextInt(rng, packPool.length), 1);
+    offers.push({ kind: 'pack', packId: pack!.id, price: pack!.cost, sold: false });
+  }
+  const voucherPool = content.vouchers.filter((v) => !d.vouchers.includes(v.id));
+  for (let i = 0; i < d.config.shopVoucherOffers && voucherPool.length > 0; i++) {
+    const [voucher] = voucherPool.splice(nextInt(rng, voucherPool.length), 1);
+    offers.push({ kind: 'voucher', voucherId: voucher!.id, price: voucher!.cost, sold: false });
+  }
+  d.rng.pack = rng.getState();
+  return offers;
+}
+
 function openShop(d: Draft, content: RunContent, events: RunEvent[]): void {
-  const offers = rollOffers(d, content);
+  const offers = [...rollOffers(d, content), ...rollLootOffers(d, content)];
   d.shop = offers;
   d.rerollCost = d.config.rerollBaseCost;
   d.phase = 'shop';
@@ -600,6 +662,9 @@ function buy(
   const offer = d.shop[offerIndex];
   if (!offer || offer.sold) return err('INVALID_OFFER', 'No such offer');
   if (d.money < offer.price) return err('NOT_ENOUGH_MONEY', 'Not enough money');
+  // Packs and vouchers become buyable in their own tasks.
+  if (offer.kind === 'pack' || offer.kind === 'voucher')
+    return err('INVALID_OFFER', 'This offer cannot be bought yet');
   if (offer.kind === 'consumable') {
     if (d.consumables.length >= d.config.consumableSlots)
       return err('NO_CONSUMABLE_SLOT', 'All consumable slots are full');
@@ -628,7 +693,10 @@ function reroll(d: Draft, content: RunContent, events: RunEvent[]): RunError | n
   if (d.money < d.rerollCost) return err('NOT_ENOUGH_MONEY', 'Not enough money');
   d.money -= d.rerollCost;
   d.rerollCost += d.config.rerollCostStep;
-  d.shop = rollOffers(d, content);
+  d.shop = [
+    ...rollOffers(d, content),
+    ...d.shop.filter((o) => o.kind === 'pack' || o.kind === 'voucher'),
+  ];
   events.push({ type: 'shopRerolled', offers: d.shop, money: d.money, nextCost: d.rerollCost });
   return null;
 }
@@ -912,6 +980,7 @@ function toDraft(state: RunState): Draft {
     hand: [...state.hand],
     jokers: [...state.jokers],
     consumables: [...state.consumables],
+    vouchers: [...state.vouchers],
     handLevels: { ...state.handLevels },
     shop: [...state.shop],
     rng: { ...state.rng },

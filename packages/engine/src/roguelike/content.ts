@@ -214,14 +214,12 @@ export const ENHANCEMENTS: readonly EnhancementDefinition[] = [
  */
 export const CONSUMABLES: readonly ConsumableDefinition[] = [
   // "Estudio de <mano>": raises that hand type by one level. One per hand category.
-  ...HAND_CATEGORIES.map(
-    (hand): ConsumableDefinition => ({
-      id: `study_${hand}`,
-      cost: 3,
-      targets: null,
-      ops: [{ op: 'levelUpHand', hand }],
-    }),
-  ),
+  ...HAND_CATEGORIES.map((hand): ConsumableDefinition => ({
+    id: `study_${hand}`,
+    cost: 3,
+    targets: null,
+    ops: [{ op: 'levelUpHand', hand }],
+  })),
   // "Refuerzo": gives 1-2 cards the "Reforzada" enhancement.
   {
     id: 'reinforce',

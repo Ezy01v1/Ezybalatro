@@ -53,6 +53,8 @@ function randomAction(rng: Rng, state: RunState): RunAction {
     const consumablesFull = state.consumables.length >= state.config.consumableSlots;
     const affordable = state.shop.flatMap((o, i) =>
       !o.sold &&
+      // Packs and vouchers join the generator when they can be bought.
+      (o.kind === 'joker' || o.kind === 'consumable') &&
       o.price <= state.money &&
       !(o.kind === 'joker' && jokersFull) &&
       !(o.kind === 'consumable' && consumablesFull)

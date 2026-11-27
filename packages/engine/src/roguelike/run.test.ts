@@ -159,7 +159,15 @@ describe('rounds, rewards and shop', () => {
       money: 20,
     });
     expect([state.phase, state.blind, state.money]).toEqual(['shop', 'big', 20]);
-    expect(state.shop.map((o) => o.kind)).toEqual(['joker', 'joker', 'consumable', 'consumable']);
+    expect(state.shop.map((o) => o.kind)).toEqual([
+      'joker',
+      'joker',
+      'consumable',
+      'consumable',
+      'pack',
+      'pack',
+      'voucher',
+    ]);
     const [, , a, b] = state.shop;
     expect(
       a?.kind === 'consumable' && b?.kind === 'consumable' && a.consumableId !== b.consumableId,
@@ -469,7 +477,7 @@ describe('MVP content and shop', () => {
 
   it('saved states carry the schema version', () => {
     expect(createRun('v').state.version).toBe(RUN_STATE_VERSION);
-    expect(RUN_STATE_VERSION).toBe(2);
+    expect(RUN_STATE_VERSION).toBe(3);
   });
 
   it('starts with an empty inventory and counters at 1', () => {
@@ -967,5 +975,97 @@ describe('save/load with card-changing consumables', () => {
     expect(hasUniqueIds(state.deck)).toBe(true);
 
     expect(replayRun({ seed: 'save-load', config, actions }, content).state).toEqual(state);
+  });
+});
+
+describe('packs and vouchers in the shop', () => {
+  const atShop = (seed = 'shop', config: Partial<RunConfig> = {}) =>
+    playFirst(createRun(seed, { ...EASY, startingMoney: 50, ...config }).state).state;
+
+  it('lays out jokers, consumables, two packs and one voucher', () => {
+    const { shop } = atShop();
+    expect(shop.map((o) => o.kind)).toEqual([
+      'joker',
+      'joker',
+      'consumable',
+      'consumable',
+      'pack',
+      'pack',
+      'voucher',
+    ]);
+    const packs = shop.filter((o) => o.kind === 'pack');
+    expect(new Set(packs.map((o) => (o.kind === 'pack' ? o.packId : ''))).size).toBe(2);
+    for (const offer of shop) {
+      const cost =
+        offer.kind === 'pack'
+          ? DEFAULT_CONTENT.packs.find((p) => p.id === offer.packId)?.cost
+          : offer.kind === 'voucher'
+            ? DEFAULT_CONTENT.vouchers.find((v) => v.id === offer.voucherId)?.cost
+            : offer.price;
+      expect(offer.price).toBe(cost);
+      expect(offer.sold).toBe(false);
+    }
+  });
+
+  it('leaves the joker and consumable draws exactly as before', () => {
+    const ids = (seed: string) =>
+      atShop(seed)
+        .shop.slice(0, 4)
+        .map((o) =>
+          o.kind === 'joker' ? o.jokerId : o.kind === 'consumable' ? o.consumableId : o.kind,
+        );
+    expect(ids('shop')).toEqual(['steady_hand', 'tip_jar', 'study_flush', 'paint_d']);
+    expect(ids('E2E-9')).toEqual([
+      'minimalist',
+      'rough_diamond',
+      'study_straight_flush',
+      'paint_h',
+    ]);
+    const first = atShop('E2E-9').shop[0];
+    expect(first).toMatchObject({ kind: 'joker', jokerId: 'minimalist', price: 6 });
+  });
+
+  it('sorts packs and vouchers from the pack stream only', () => {
+    const before = createRun('shop', { ...EASY, startingMoney: 50 }).state;
+    const after = atShop();
+    expect(after.rng.pack).not.toEqual(before.rng.pack);
+    const rerolled = act(after, { type: 'reroll' }).state;
+    expect(rerolled.rng.pack).toEqual(after.rng.pack);
+    expect(rerolled.rng.shop).not.toEqual(after.rng.shop);
+  });
+
+  it('reroll keeps the packs and the voucher and only changes jokers and consumables', () => {
+    const shop = atShop();
+    const rerolled = act(shop, { type: 'reroll' }).state;
+    expect(rerolled.shop.slice(4)).toEqual(shop.shop.slice(4));
+    expect(rerolled.shop.map((o) => o.kind)).toEqual(shop.shop.map((o) => o.kind));
+  });
+
+  it('offers no voucher when none are left in the catalog', () => {
+    const noVouchers: RunContent = { ...DEFAULT_CONTENT, vouchers: [] };
+    const state = playFirst(
+      createRun('shop', { ...EASY, startingMoney: 50 }, noVouchers).state,
+      1,
+      noVouchers,
+    ).state;
+    expect(state.shop.some((o) => o.kind === 'voucher')).toBe(false);
+  });
+
+  it('never offers a voucher that was already bought', () => {
+    const all = DEFAULT_CONTENT.vouchers.map((v) => v.id);
+    const created = createRun('shop', { ...EASY, startingMoney: 50 }).state;
+    const state = playFirst({ ...created, vouchers: all }).state;
+    expect(state.shop.some((o) => o.kind === 'voucher')).toBe(false);
+    const partly = playFirst({ ...created, vouchers: all.slice(1) }).state;
+    expect(partly.shop.filter((o) => o.kind === 'voucher')).toEqual([
+      { kind: 'voucher', voucherId: all[0], price: DEFAULT_CONTENT.vouchers[0]!.cost, sold: false },
+    ]);
+  });
+
+  it('starts with no vouchers, no open pack and a pack stream, in state version 3', () => {
+    const { state } = createRun('x');
+    expect(RUN_STATE_VERSION).toBe(3);
+    expect([state.version, state.vouchers, state.openPack]).toEqual([3, [], null]);
+    expect(state.rng.pack).toBeDefined();
   });
 });
