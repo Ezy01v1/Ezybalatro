@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CONTENT,
   DEFAULT_RUN_CONFIG,
+  MAX_RETRIGGERS,
   createRun,
   createSeededRng,
   hasUniqueIds,
+  jokerSlotsFor,
   nextInt,
   replayRun,
   runReducer,
@@ -13,6 +15,7 @@ import {
   type Rng,
   type RunAction,
   type RunConfig,
+  type RunEvent,
   type RunState,
 } from '../index';
 import { deepFreeze } from '../testing/holdem-fixtures';
@@ -46,6 +49,13 @@ function consumableAction(rng: Rng, state: RunState): RunAction | null {
   return runReducer(state, action).ok ? action : null;
 }
 
+/** The jokers that repeat cards or roll dice. */
+const SCORING_JOKERS: ReadonlySet<string> = new Set(
+  DEFAULT_CONTENT.jokers
+    .filter((j) => j.retriggers || /^(spark|loaded_die|lucky_coin)$/.test(j.id))
+    .map((j) => j.id),
+);
+
 /** A joker or consumable pack cannot be opened while its slots are full. */
 function packNeedsFullSlot(
   state: RunState,
@@ -59,7 +69,7 @@ function packNeedsFullSlot(
 
 /** With a pack open: pick a random option that fits (or skip). */
 function packAction(rng: Rng, state: RunState): RunAction {
-  const jokersFull = state.jokers.length >= state.config.jokerSlots;
+  const jokersFull = state.jokers.length >= jokerSlotsFor(state);
   const consumablesFull = state.consumables.length >= state.config.consumableSlots;
   const fits = state.openPack!.items.flatMap((item, i) =>
     item.taken ||
@@ -76,7 +86,7 @@ function randomAction(rng: Rng, state: RunState): RunAction {
   const roll = nextInt(rng, 100);
   if (state.phase === 'shop' && state.openPack) return packAction(rng, state);
   if (state.phase === 'shop') {
-    const jokersFull = state.jokers.length >= state.config.jokerSlots;
+    const jokersFull = state.jokers.length >= jokerSlotsFor(state);
     const consumablesFull = state.consumables.length >= state.config.consumableSlots;
     const affordable = state.shop.flatMap((o, i) =>
       !o.sold &&
@@ -92,7 +102,20 @@ function randomAction(rng: Rng, state: RunState): RunAction {
       const offer = state.shop[i]!;
       return offer.kind === 'consumable' && ['twin', 'scrap'].includes(offer.consumableId);
     });
-    const pool = cardChangers.length > 0 && roll < 60 ? cardChangers : affordable;
+    // Echo and luck jokers, and any joker with an edition, are bought first too: the 5c scoring
+    // paths (repeats, rolls, editions) need plenty of coverage.
+    const scoringExtras = affordable.filter((i) => {
+      const offer = state.shop[i]!;
+      return (
+        offer.kind === 'joker' && (offer.edition !== undefined || SCORING_JOKERS.has(offer.jokerId))
+      );
+    });
+    const pool =
+      cardChangers.length > 0 && roll < 30
+        ? cardChangers
+        : scoringExtras.length > 0 && roll < 60
+          ? scoringExtras
+          : affordable;
     if (roll < 60 && pool.length > 0)
       return { type: 'buy', offerIndex: pool[nextInt(rng, pool.length)]! };
     if (roll < 50 && state.jokers.length >= 2)
@@ -129,7 +152,16 @@ function playRandomRun(seed: string, config: RunConfig, saveLoadAt: number) {
     if (!result.ok)
       throw new Error(`Generated an illegal action ${action.type}: ${result.error.code}`);
     actions.push(action);
+    const previous = state;
     state = deepFreeze(result.state);
+
+    // Scoring luck lives in its own stream: playing a hand that does not end the blind only moves
+    // `score` and `deck`, never what the shop or the packs will deal.
+    if (action.type === 'play' && state.phase === 'blind' && state.blind === previous.blind) {
+      expect(state.rng.shop).toEqual(previous.rng.shop);
+      expect(state.rng.pack).toEqual(previous.rng.pack);
+      expect(state.rng.boss).toEqual(previous.rng.boss);
+    }
 
     // Invariant 2 for the run: every card of the deck is in exactly one place (hand, draw pile, or played/discarded).
     const inPlay = [...state.hand, ...state.drawPile];
@@ -141,7 +173,7 @@ function playRandomRun(seed: string, config: RunConfig, saveLoadAt: number) {
     // Copies made by consumables can leave the hand over the limit, one card per copy at most.
     expect(state.hand.length).toBeLessThanOrEqual(config.handSize + state.nextCardNumber - 1);
     expect(state.consumables.length).toBeLessThanOrEqual(state.config.consumableSlots);
-    expect(state.jokers.length).toBeLessThanOrEqual(state.config.jokerSlots);
+    expect(state.jokers.length).toBeLessThanOrEqual(jokerSlotsFor(state));
     expect(new Set(state.jokers.map((j) => j.jokerId)).size).toBe(state.jokers.length);
     expect(state.openPack === null || state.phase === 'shop').toBe(true);
     expect(new Set(state.vouchers).size).toBe(state.vouchers.length);
@@ -152,6 +184,27 @@ function playRandomRun(seed: string, config: RunConfig, saveLoadAt: number) {
   return { state, actions };
 }
 
+type HandScored = Extract<RunEvent, { type: 'handScored' }>;
+
+/** How many times each card scored in a hand (its first pass plus its repeats). */
+function cardPasses(event: HandScored): Map<string, number> {
+  const passes = new Map<string, number>();
+  for (const step of event.steps) {
+    if (step.source.kind !== 'card') continue;
+    passes.set(step.source.cardId, (passes.get(step.source.cardId) ?? 0) + 1);
+  }
+  return passes;
+}
+
+/** Did a luck joker or the coin enhancement add something this hand? */
+function usedLuck(event: HandScored): boolean {
+  return event.steps.some(
+    (st) =>
+      (st.source.kind === 'joker' && /^(spark|loaded_die|lucky_coin)$/.test(st.source.jokerId)) ||
+      (st.source.kind === 'enhancement' && st.source.enhancement === 'coin'),
+  );
+}
+
 describe('run properties', () => {
   it('replaying the action log gives the same final state and score (also across a save/load)', () => {
     let deepest = 0;
@@ -160,6 +213,9 @@ describe('run properties', () => {
     let runsWithScrap = 0;
     let pickedFromPacks = 0;
     let vouchersBought = 0;
+    let repeatedPasses = 0;
+    let editionSteps = 0;
+    let luckyHands = 0;
     fc.assert(
       fc.property(fc.string(), fc.boolean(), fc.nat({ max: 60 }), (seed, gentle, saveLoadAt) => {
         const config = gentle ? GENTLE : DEFAULT_RUN_CONFIG;
@@ -170,7 +226,21 @@ describe('run properties', () => {
         usedConsumables += actions.filter((a) => a.type === 'applyConsumable').length;
         pickedFromPacks += actions.filter((a) => a.type === 'pickFromPack').length;
         vouchersBought += state.vouchers.length;
-        const replayed = replayRun({ seed, config, actions }).state;
+        const replay = replayRun({ seed, config, actions });
+        const replayed = replay.state;
+        for (const event of replay.events) {
+          if (event.type !== 'handScored') continue;
+          const passes = cardPasses(event);
+          for (const count of passes.values())
+            expect(count).toBeLessThanOrEqual(1 + MAX_RETRIGGERS);
+          repeatedPasses += event.steps.filter(
+            (st) => st.source.kind === 'card' && st.source.repeat !== undefined,
+          ).length;
+          editionSteps += event.steps.filter(
+            (st) => st.source.kind === 'joker' && st.source.hook === 'edition',
+          ).length;
+          if (usedLuck(event)) luckyHands++;
+        }
         expect(replayed).toEqual(state);
         expect(replayed.bestHandScore).toBe(state.bestHandScore);
       }),
@@ -184,6 +254,9 @@ describe('run properties', () => {
     expect(runsWithScrap).toBeGreaterThan(0);
     expect(pickedFromPacks).toBeGreaterThan(0);
     expect(vouchersBought).toBeGreaterThan(0);
+    expect(repeatedPasses).toBeGreaterThan(0);
+    expect(editionSteps).toBeGreaterThan(0);
+    expect(luckyHands).toBeGreaterThan(0);
   }, 60_000);
 
   it('the same seed and actions give the same events', () => {

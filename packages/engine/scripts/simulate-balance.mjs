@@ -93,7 +93,22 @@ function playBlind(state, stats) {
   }
   stats.handTypes[best.handType] = (stats.handTypes[best.handType] ?? 0) + 1;
   stats.blindBest = Math.max(stats.blindBest, best.score);
-  return act(state, { type: 'play', cardIds: best.played.map((c) => c.id) });
+  const result = runReducer(state, { type: 'play', cardIds: best.played.map((c) => c.id) });
+  if (!result.ok) throw new Error(`Bot made an illegal move play: ${result.error.code}`);
+  for (const event of result.events) {
+    if (event.type !== 'handScored') continue;
+    for (const step of event.steps) {
+      const { source } = step;
+      if (source.kind === 'card' && source.repeat !== undefined) stats.repeats++;
+      if (source.kind === 'joker' && source.hook === 'edition') stats.editionSteps++;
+      if (
+        /^(spark|loaded_die|lucky_coin)$/.test(source.jokerId ?? '') ||
+        source.enhancement === 'coin'
+      )
+        stats.luckSteps++;
+    }
+  }
+  return result.state;
 }
 
 function shop(state, stats) {
@@ -101,7 +116,7 @@ function shop(state, stats) {
   for (let i = 0; i < state.shop.length; i++) {
     const offer = state.shop[i];
     if (offer.sold || offer.price > state.money) continue;
-    if (offer.kind === 'joker' && state.jokers.length < state.config.jokerSlots) {
+    if (offer.kind === 'joker' && state.jokers.length < engine.jokerSlotsFor(state)) {
       state = act(state, { type: 'buy', offerIndex: i });
     } else if (
       offer.kind === 'consumable' &&
@@ -140,7 +155,7 @@ function shopLoot(state, stats) {
     (offer) => offer.kind === 'pack' && offer.packId === 'pack_joker' && !offer.sold,
   );
   const pack = state.shop[packIndex];
-  if (pack && state.jokers.length < state.config.jokerSlots && state.money - pack.price >= 5) {
+  if (pack && state.jokers.length < engine.jokerSlotsFor(state) && state.money - pack.price >= 5) {
     state = act(state, { type: 'buy', offerIndex: packIndex });
     stats.packs++;
     const itemIndex = state.openPack.items.findIndex((item) => !item.taken);
@@ -151,7 +166,16 @@ function shopLoot(state, stats) {
 
 function simulate(seed) {
   let state = createRun(seed).state;
-  const stats = { handTypes: {}, blinds: [], blindBest: 0, vouchers: 0, packs: 0 };
+  const stats = {
+    handTypes: {},
+    blinds: [],
+    blindBest: 0,
+    vouchers: 0,
+    packs: 0,
+    repeats: 0,
+    editionSteps: 0,
+    luckSteps: 0,
+  };
   let guard = 0;
   while (state.status === 'in_progress') {
     if (++guard > 2000) throw new Error(`Run ${seed} did not finish`);
@@ -195,6 +219,9 @@ for (const r of results) {
 const wins = results.filter((r) => r.status === 'won').length;
 const vouchersBought = results.reduce((n, r) => n + r.stats.vouchers, 0);
 const packsOpened = results.reduce((n, r) => n + r.stats.packs, 0);
+const repeats = results.reduce((n, r) => n + r.stats.repeats, 0);
+const editionSteps = results.reduce((n, r) => n + r.stats.editionSteps, 0);
+const luckSteps = results.reduce((n, r) => n + r.stats.luckSteps, 0);
 const bossFaced = {};
 const bossDeaths = {};
 for (const b of results.flatMap((r) => r.stats.blinds.filter((x) => x.blind === 'boss'))) {
@@ -234,6 +261,9 @@ if (JSON_OUT) {
         medianAnte: median,
         vouchersBought,
         packsOpened,
+        repeats,
+        editionSteps,
+        luckSteps,
         deaths,
         bossFaced,
         bossDeaths,
@@ -249,6 +279,9 @@ if (JSON_OUT) {
     `Runs: ${RUNS} · ganadas: ${wins} (${pct(wins)}) · nivel mediano alcanzado: ${median === 9 ? 'ganó' : median}`,
   );
   console.log(`Vales comprados: ${vouchersBought} · sobres de comodines abiertos: ${packsOpened}`);
+  console.log(
+    `Pasadas repetidas: ${repeats} · pasos de edición: ${editionSteps} · pasos de suerte: ${luckSteps}`,
+  );
   console.log('\nDónde muere el bot:');
   const order = (k) =>
     k === 'won'
