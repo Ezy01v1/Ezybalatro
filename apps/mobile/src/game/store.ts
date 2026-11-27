@@ -61,6 +61,9 @@ export interface GameStore {
   /** Uses the consumable (on the selected cards while targeting). Keeps the mode and selection on error. */
   applyConsumable(instanceId: string): RunErrorCode | null;
   sellConsumable(instanceId: string): void;
+  /** Takes one option of the open pack. Returns the engine's error code (the pack stays open). */
+  pickFromPack(itemIndex: number): RunErrorCode | null;
+  skipPack(): void;
   reroll(): RunErrorCode | null;
   leaveShop(): void;
   moveJoker(from: number, to: number): void;
@@ -256,6 +259,15 @@ export const useGame = create<GameStore>((set, get) => {
       if (get().playback) return;
       if (!dispatch({ type: 'sellConsumable', instanceId }).ok) return;
       if (get().targeting?.instanceId === instanceId) set({ targeting: null, selected: [] });
+    },
+
+    pickFromPack(itemIndex) {
+      const result = dispatch({ type: 'pickFromPack', itemIndex });
+      return result.ok ? null : result.code;
+    },
+
+    skipPack() {
+      dispatch({ type: 'skipPack' });
     },
 
     reroll() {
