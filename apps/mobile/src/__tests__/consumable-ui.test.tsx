@@ -194,7 +194,7 @@ describe('shop: using and selling consumables', () => {
     await press('consumable-slot-1');
     expect(inactive('consumable-use')).toBe(true);
     expect(screen.getByTestId('consumable-use-reason')).toHaveTextContent(
-      'Elige esto en una ciega',
+      'Úsalo durante una ciega',
     );
     await press('consumable-use');
     expect(useGame.getState().targeting).toBeNull();

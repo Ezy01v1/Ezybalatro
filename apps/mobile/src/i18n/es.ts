@@ -215,7 +215,7 @@ export const es = {
     slotHint: 'Toca para ver opciones',
     slotInactiveHint: 'No disponible mientras se cuenta el puntaje',
     use: 'Usar',
-    onlyInBlind: 'Elige esto en una ciega',
+    onlyInBlind: 'Úsalo durante una ciega',
     targetsInfo: (min: number, max: number) =>
       min === max
         ? `Se usa sobre ${max} ${max === 1 ? 'carta' : 'cartas'} de tu mano.`
@@ -244,7 +244,7 @@ export const es = {
       scrapMin: (n: number) => `Tu mazo no puede tener menos de ${n} cartas.`,
       wouldEmptyHand: 'Te quedarías sin cartas en la mano.',
       invalidConsumable: 'Ese consumible ya no está disponible.',
-      invalidPhase: 'Elige esto en una ciega',
+      invalidPhase: 'Úsalo durante una ciega',
       generic: 'No se pudo usar. Inténtalo de nuevo.',
     },
     deck: {
