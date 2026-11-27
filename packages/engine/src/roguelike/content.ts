@@ -191,6 +191,55 @@ export const JOKERS: readonly JokerDefinition[] = [
     cost: 4,
     onRoundEnd: (_self, ctx) => (ctx.handsLeft > 0 ? { money: ctx.handsLeft } : undefined),
   },
+  // "Eco de la Corte": face cards that score are played once more.
+  {
+    id: 'court_echo',
+    rarity: 'uncommon',
+    cost: 7,
+    retriggers: (_self, _ctx, card) => (card.rank >= 11 && card.rank <= 13 ? 1 : 0),
+  },
+  // "Primer Bis": the first scoring card is played once more.
+  {
+    id: 'first_encore',
+    rarity: 'uncommon',
+    cost: 6,
+    retriggers: (_self, ctx, card) => (card.id === ctx.scoring[0]?.id ? 1 : 0),
+  },
+  // "Último Bis": the last scoring card is played once more.
+  {
+    id: 'last_encore',
+    rarity: 'uncommon',
+    cost: 6,
+    retriggers: (_self, ctx, card) => (card.id === ctx.scoring.at(-1)?.id ? 1 : 0),
+  },
+  // "Eco del Corazón": scoring hearts are played once more.
+  {
+    id: 'heart_echo',
+    rarity: 'common',
+    cost: 5,
+    retriggers: (_self, _ctx, card) => (card.suit === 'h' ? 1 : 0),
+  },
+  // "Moneda de la Suerte": 1 in 4 chance of +$4 each hand.
+  {
+    id: 'lucky_coin',
+    rarity: 'common',
+    cost: 5,
+    onHandScored: (_self, ctx) => (ctx.roll(1, 4) ? { money: 4 } : undefined),
+  },
+  // "Dado Cargado": 1 in 8 chance of ×2 mult each hand.
+  {
+    id: 'loaded_die',
+    rarity: 'uncommon',
+    cost: 7,
+    onHandScored: (_self, ctx) => (ctx.roll(1, 8) ? { xMult: 2 } : undefined),
+  },
+  // "Chispa": each scoring card has a 1 in 3 chance of +3 mult.
+  {
+    id: 'spark',
+    rarity: 'common',
+    cost: 4,
+    onCardScored: (_self, ctx) => (ctx.roll(1, 3) ? { mult: 3 } : undefined),
+  },
 ];
 
 /** Card enhancements (cards get them through consumables). */
@@ -207,6 +256,8 @@ export const ENHANCEMENTS: readonly EnhancementDefinition[] = [
   { id: 'heavy', onHeld: () => ({ chips: 30 }) },
   // "VolÃ¡til": Ã—1.3 mult when it scores.
   { id: 'volatile', onScored: () => ({ xMult: 1.3 }) },
+  // "Moneda": 1 in 2 chance of +20 mult when it scores.
+  { id: 'coin', onScored: (_card, ctx) => (ctx.roll(1, 2) ? { mult: 20 } : undefined) },
 ];
 
 /** Joker editions, rolled on shop offers. Proposed es-419 names in the comments. */

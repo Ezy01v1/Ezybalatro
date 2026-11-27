@@ -187,11 +187,12 @@ describe('rounds, rewards and shop', () => {
   });
 
   it('keeps the joker draw order of the shop sub-stream (consumables are drawn after)', () => {
-    // Recorded before consumables existed: the e2e seed depends on these two staying put.
+    // Re-recorded in 5c, when the catalog grew from 20 to 27 jokers (a bigger pool changes which
+    // jokers a seed draws, not the order of the draws).
     const { state } = playFirst(createRun('seed', { ...EASY, startingMoney: 12 }).state);
     expect(state.shop.slice(0, 2)).toEqual([
-      { kind: 'joker', jokerId: 'tip_jar', price: 4, sold: false },
-      { kind: 'joker', jokerId: 'ember', price: 4, sold: false },
+      { kind: 'joker', jokerId: 'last_breath', price: 8, sold: false },
+      { kind: 'joker', jokerId: 'first_encore', price: 6, sold: false },
     ]);
   });
 
@@ -408,10 +409,10 @@ describe('progression', () => {
 });
 
 describe('MVP content and shop', () => {
-  it('ships 20 jokers and 5 bosses with unique ids', () => {
-    expect(DEFAULT_CONTENT.jokers).toHaveLength(20);
+  it('ships 27 jokers and 5 bosses with unique ids', () => {
+    expect(DEFAULT_CONTENT.jokers).toHaveLength(27);
     expect(DEFAULT_CONTENT.bosses).toHaveLength(5);
-    expect(new Set(DEFAULT_CONTENT.jokers.map((j) => j.id)).size).toBe(20);
+    expect(new Set(DEFAULT_CONTENT.jokers.map((j) => j.id)).size).toBe(27);
   });
 
   it('reroll costs more each time in the same shop and resets in the next one', () => {
@@ -1014,22 +1015,25 @@ describe('packs and vouchers in the shop', () => {
     }
   });
 
-  it('leaves the joker and consumable draws exactly as before', () => {
+  it('keeps the joker-then-consumable draw order, and the Maestro seed buyable at offer 0', () => {
     const ids = (seed: string) =>
       atShop(seed)
         .shop.slice(0, 4)
         .map((o) =>
           o.kind === 'joker' ? o.jokerId : o.kind === 'consumable' ? o.consumableId : o.kind,
         );
-    expect(ids('shop')).toEqual(['steady_hand', 'tip_jar', 'study_flush', 'paint_d']);
+    // Re-recorded in 5c (catalog of 27 jokers). The consumables did not move: they are drawn after.
+    expect(ids('shop')).toEqual(['piggy_bank', 'prism', 'study_flush', 'paint_d']);
     expect(ids('E2E-9')).toEqual([
-      'minimalist',
-      'rough_diamond',
+      'last_encore',
+      'dynamic_trio',
       'study_straight_flush',
       'paint_h',
     ]);
-    const first = atShop('E2E-9').shop[0];
-    expect(first).toMatchObject({ kind: 'joker', jokerId: 'minimalist', price: 6 });
+    // The Maestro flow buys offer 0 with what the first blind pays: it must be a joker it can afford.
+    const state = atShop('E2E-9');
+    expect(state.shop[0]).toMatchObject({ kind: 'joker', jokerId: 'last_encore', price: 6 });
+    expect(state.shop[0]!.price).toBeLessThanOrEqual(state.money);
   });
 
   it('sorts packs and vouchers from the pack stream only', () => {

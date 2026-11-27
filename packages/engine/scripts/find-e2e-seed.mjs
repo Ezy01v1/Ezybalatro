@@ -2,6 +2,7 @@
 /**
  * Finds a seed whose opening hand beats the first blind with a single play, for the Maestro flow
  * (apps/mobile/.maestro/roguelike-first-blind.yaml). Prints the seed, the cards to tap and the score.
+ * The shop offer 0 after winning must be a joker the player can afford (the flow buys it).
  * Usage: pnpm build:packages && node packages/engine/scripts/find-e2e-seed.mjs [prefix]
  */
 import { createRequire } from 'node:module';
@@ -37,6 +38,10 @@ for (let i = 0; i < 1000; i++) {
       best = { score: scored.score, cardIds, handType: scored.handType };
   }
   if (best.score >= state.target) {
+    // The flow then buys shop offer 0 (`buy-0`): it must be a joker the first blind's pay covers.
+    const won = runReducer(state, { type: 'play', cardIds: best.cardIds });
+    const shop = won.state.shop;
+    if (shop[0]?.kind !== 'joker' || shop[0].price > won.state.money) continue;
     console.log(`seed: ${seed}`);
     console.log(`hand: ${state.hand.map((c) => c.id).join(' ')}`);
     console.log(
