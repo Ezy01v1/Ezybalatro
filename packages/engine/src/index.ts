@@ -48,6 +48,7 @@ export {
 export type { ScoreInput, ScoreResult, ScoreSource, ScoreStep } from './roguelike/scoring';
 export { handBase, scoreHand } from './roguelike/scoring';
 export type {
+  OpenPack,
   RunAction,
   RunConfig,
   RunErrorCode,

@@ -29,6 +29,7 @@ import { DeckSheet } from './DeckSheet';
 import { JokerDetailSheet } from './JokerDetailSheet';
 import { JokerRail } from './JokerRail';
 import { OfferRow } from './OfferRow';
+import { PackSheet } from './PackSheet';
 import { VoucherPills } from './VoucherPills';
 
 type BasicOffer = Extract<ShopOffer, { kind: 'joker' | 'consumable' }>;
@@ -308,6 +309,7 @@ export function ShopScreen({ run }: { run: RunState }) {
         onUsed={showNotice}
       />
       <DeckSheet visible={deckOpen} run={run} onClose={() => setDeckOpen(false)} />
+      <PackSheet run={run} onPicked={showNotice} />
       <JokerDetailSheet
         joker={detail}
         onClose={() => {
