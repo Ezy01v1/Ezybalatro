@@ -1,5 +1,5 @@
 import type { JokerInstance } from '@naipes/engine';
-import { es, JOKER_TEXTS } from '@/i18n/es';
+import { EDITION_TEXTS, es, JOKER_TEXTS } from '@/i18n/es';
 import { Button, Text } from '@/ui/primitives';
 import { Sheet } from '@/components/shared/Sheet';
 
@@ -21,6 +21,14 @@ export function JokerDetailSheet({
       <Text variant="body" center>
         {text?.description}
       </Text>
+      {joker?.edition ? (
+        <Text variant="caption" tone="primary" center testID="joker-detail-edition">
+          {es.editions.detail(
+            EDITION_TEXTS[joker.edition]?.name ?? joker.edition,
+            EDITION_TEXTS[joker.edition]?.description ?? '',
+          )}
+        </Text>
+      ) : null}
       {action ? (
         <Button
           testID={action.testID}

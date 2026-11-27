@@ -14,6 +14,7 @@ import { useGame } from '@/game/store';
 import {
   BOSS_TEXTS,
   CONSUMABLE_TEXTS,
+  EDITION_TEXTS,
   es,
   JOKER_TEXTS,
   PACK_TEXTS,
@@ -128,6 +129,14 @@ function OfferCard({
   return (
     <View style={[styles.offer, offer.sold && styles.offerSold]} testID={`offer-${index}`}>
       <Text variant="subtitle">{text.name}</Text>
+      {offer.kind === 'joker' && offer.edition ? (
+        <Text variant="caption" tone="primary" testID={`offer-edition-${index}`}>
+          {es.editions.detail(
+            EDITION_TEXTS[offer.edition]?.name ?? offer.edition,
+            EDITION_TEXTS[offer.edition]?.description ?? '',
+          )}
+        </Text>
+      ) : null}
       <Text variant="caption" tone="muted">
         {text.description}
       </Text>

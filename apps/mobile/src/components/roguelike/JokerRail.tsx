@@ -12,7 +12,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { es, JOKER_TEXTS } from '@/i18n/es';
+import { EditionTag, editionColor } from '@/components/shared/EditionTag';
+import { EDITION_TEXTS, es, JOKER_TEXTS } from '@/i18n/es';
 import { colors, layout, motion, radii, spacing } from '@/theme/tokens';
 import { Text } from '@/ui/primitives';
 
@@ -117,6 +118,7 @@ function JokerSlot({ joker, index, count, pulseKey, label, onPress, onMove }: Sl
   }, [pulseKey, reduced, rotate, scale]);
 
   const instanceId = joker.instanceId;
+  const edition = joker.edition;
   const tap = Gesture.Tap()
     .withTestId(`joker-tap-${instanceId}`)
     .onEnd((_e, success) => {
@@ -167,9 +169,19 @@ function JokerSlot({ joker, index, count, pulseKey, label, onPress, onMove }: Sl
           testID={`joker-${joker.instanceId}`}
           accessible
           accessibilityRole="button"
-          accessibilityLabel={`${text.name}: ${text.description}`}
-          style={[styles.slot, styles.filled, animated]}
+          accessibilityLabel={`${text.name}: ${text.description}${edition ? `. ${es.editions.a11y(EDITION_TEXTS[edition]?.name ?? edition)}` : ''}`}
+          style={[
+            styles.slot,
+            styles.filled,
+            edition ? { borderColor: editionColor(edition) } : null,
+            animated,
+          ]}
         >
+          {edition ? (
+            <View style={styles.edition} pointerEvents="none">
+              <EditionTag edition={edition} testID={`joker-edition-${instanceId}`} />
+            </View>
+          ) : null}
           <View style={styles.slotFrame} pointerEvents="none" />
           <Text
             variant="caption"
@@ -236,6 +248,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   name: { fontSize: 12, lineHeight: 14 },
+  edition: { position: 'absolute', top: -9, left: -2, zIndex: 2 },
   badge: {
     position: 'absolute',
     top: -12,

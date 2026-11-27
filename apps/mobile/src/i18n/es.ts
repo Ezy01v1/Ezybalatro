@@ -181,6 +181,11 @@ export const es = {
     abandonConfirm: 'Toca otra vez para abandonar',
     debuffed: 'No puntúa por el jefe',
   },
+  editions: {
+    label: 'Edición',
+    a11y: (name: string) => `edición ${name}`,
+    detail: (name: string, description: string) => `Edición ${name}: ${description}`,
+  },
   score: {
     /** Prefix of a step that plays a card (or its effects) again. */
     again: '↻',
