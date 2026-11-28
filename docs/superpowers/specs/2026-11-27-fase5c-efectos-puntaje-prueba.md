@@ -12,6 +12,8 @@ Lo automático ya está verificado (lint, typecheck, tests del motor y de la app
 1. [ ] Una oferta de comodín con edición muestra una línea «Edición <nombre>: <efecto>» y su precio incluye el sobreprecio ($2–$4 más). Ningún texto se corta a 360 px ni con el texto del sistema al 130 %.
 2. [ ] Al comprarla, el comodín aparece en el riel con un rótulo corto (Lám., Aura, Irid., Ampl.) arriba a la izquierda y el borde de su color. El rótulo se lee aunque no distingas colores.
 3. [ ] Tocar el comodín abre el detalle con la línea de edición. «Vender» muestra el valor con el sobreprecio (la mitad del total, redondeada hacia abajo).
+4b. [ ] Una oferta Amplio se puede comprar aunque el riel esté 5/5 (trae su propio espacio); cualquier otra edición dice «Comodines llenos».
+4c. [ ] Con 6 y 7 espacios (Amplio, o el vale de espacio) el riel entra en 360 px: los comodines se achican pero se pueden tocar, arrastrar y leer; el rótulo de edición no tapa la etiqueta de puntos flotante (revisar con un comodín con edición que puntúa).
 4. [ ] **Amplio:** con 5/5 comodines y uno de ellos Amplio, aparece un sexto espacio vacío en el riel y se puede comprar un sexto comodín. Vender el Amplio con 6/6 deja 5/5 sin errores.
 5. [ ] Lámina, Aura e Iridiscente: al puntuar, el comodín «salta» una segunda vez al final con la edición (+50 fichas, +10 mult, ×1,5) y el marcador lo refleja.
 6. [ ] Los comodines que salen de un sobre no traen edición.

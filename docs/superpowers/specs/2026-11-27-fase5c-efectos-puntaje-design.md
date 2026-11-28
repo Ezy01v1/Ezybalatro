@@ -65,6 +65,8 @@ Nombres definitivos en español (comodines, ediciones, mejora "Moneda"); valores
 3. Las tiradas falladas no generan paso.
 4. "Chispa": 1 en 3 por carta que puntúa, +3 mult.
 5. Con el catálogo de 27 comodines cambia la oferta 0 de `E2E-9` (ahora `last_encore`, $6); el flujo de Maestro sigue valiendo y `find-e2e-seed.mjs` exige además una oferta 0 comprable.
+6. (Tras la revisión final) Una oferta con edición `ample` se puede comprar con el riel lleno, porque trae su propio espacio (`jokerFits`). El riel de comodines achica sus espacios (`railSlotWidth`) cuando hay más de 5 para que quepan a 360 px.
+7. Los pasos de suerte y de edición no llevan marca propia (`roll: true` del §5): una tirada acertada se lee como cualquier otro bonus. Queda como deuda.
 
 ## 9. Preguntas abiertas (del usuario)
 1. ¿Te parece bien dejar las **ediciones de carta** para después (aquí solo comodines)?
