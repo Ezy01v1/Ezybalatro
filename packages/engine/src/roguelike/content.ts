@@ -205,14 +205,14 @@ export const JOKERS: readonly JokerDefinition[] = [
     cost: 6,
     retriggers: (_self, ctx, card) => (card.id === ctx.scoring[0]?.id ? 1 : 0),
   },
-  // "Último Bis": the last scoring card is played once more.
+  // "Ãšltimo Bis": the last scoring card is played once more.
   {
     id: 'last_encore',
     rarity: 'uncommon',
     cost: 6,
     retriggers: (_self, ctx, card) => (card.id === ctx.scoring.at(-1)?.id ? 1 : 0),
   },
-  // "Eco del Corazón": scoring hearts are played once more.
+  // "Eco del CorazÃ³n": scoring hearts are played once more.
   {
     id: 'heart_echo',
     rarity: 'common',
@@ -226,7 +226,7 @@ export const JOKERS: readonly JokerDefinition[] = [
     cost: 5,
     onHandScored: (_self, ctx) => (ctx.roll(1, 4) ? { money: 4 } : undefined),
   },
-  // "Dado Cargado": 1 in 8 chance of ×2 mult each hand.
+  // "Dado Cargado": 1 in 8 chance of Ã—2 mult each hand.
   {
     id: 'loaded_die',
     rarity: 'uncommon',
@@ -262,11 +262,11 @@ export const ENHANCEMENTS: readonly EnhancementDefinition[] = [
 
 /** Joker editions, rolled on shop offers. Proposed es-419 names in the comments. */
 export const EDITIONS: readonly EditionDefinition[] = [
-  // "Lámina": +50 chips.
+  // "LÃ¡mina": +50 chips.
   { id: 'foil', cost: 2, effect: { chips: 50 } },
   // "Aura": +10 mult.
   { id: 'holo', cost: 3, effect: { mult: 10 } },
-  // "Iridiscente": ×1.5 mult.
+  // "Iridiscente": Ã—1.5 mult.
   { id: 'poly', cost: 4, effect: { xMult: 1.5 } },
   // "Amplio": +1 joker slot while owned.
   { id: 'ample', cost: 4, extraJokerSlots: 1 },

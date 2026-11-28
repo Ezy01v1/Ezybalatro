@@ -7,6 +7,7 @@ import {
   createRun,
   hasUniqueIds,
   isCardDebuffed,
+  jokerFits,
   jokerSellValue,
   jokerSlotsFor,
   previewPlay,
@@ -1672,5 +1673,70 @@ describe('joker editions', () => {
       expect(packIndex).toBeGreaterThanOrEqual(0);
       expect(act(full, { type: 'buy', offerIndex: packIndex }).state.openPack).not.toBeNull();
     });
+  });
+});
+
+describe('buying an offer that opens its own slot', () => {
+  const full = (): RunState => {
+    const state = playFirst(createRun('own-slot', { ...EASY, startingMoney: 50 }).state).state;
+    return {
+      ...state,
+      jokers: ['ember', 'prism', 'fan', 'saver', 'figurine'].map((jokerId, i) => ({
+        instanceId: `j${i + 1}`,
+        jokerId,
+        state: {},
+      })),
+      nextJokerNumber: 6,
+    };
+  };
+  const withOffer = (state: RunState, edition?: string): RunState => ({
+    ...state,
+    shop: [
+      {
+        kind: 'joker',
+        jokerId: 'minimalist',
+        price: 6,
+        sold: false,
+        ...(edition ? { edition } : {}),
+      },
+      ...state.shop.slice(1),
+    ],
+  });
+
+  it('an ample offer can be bought with the rail full, and leaves it legally at 6/6', () => {
+    const bought = act(withOffer(full(), 'ample'), { type: 'buy', offerIndex: 0 }).state;
+    expect(bought.jokers).toHaveLength(6);
+    expect(bought.jokers[5]!.edition).toBe('ample');
+    expect(bought.jokers.length).toBeLessThanOrEqual(jokerSlotsFor(bought));
+  });
+
+  it('a plain or foil offer is still refused with the rail full', () => {
+    expect(errorOf(withOffer(full()), { type: 'buy', offerIndex: 0 })).toBe('NO_JOKER_SLOT');
+    expect(errorOf(withOffer(full(), 'foil'), { type: 'buy', offerIndex: 0 })).toBe(
+      'NO_JOKER_SLOT',
+    );
+  });
+
+  it('jokerFits says the same, for the UI', () => {
+    const state = full();
+    expect(jokerFits(state)).toBe(false);
+    expect(jokerFits(state, 'foil')).toBe(false);
+    expect(jokerFits(state, 'ample')).toBe(true);
+    expect(jokerFits({ ...state, jokers: state.jokers.slice(1) })).toBe(true);
+  });
+
+  it('a second ample fits at 6/6 because it brings its own slot', () => {
+    const owned = full();
+    const sixth = {
+      ...owned,
+      jokers: [
+        ...owned.jokers.slice(0, 4),
+        { ...owned.jokers[4]!, edition: 'ample' },
+        { instanceId: 'j6', jokerId: 'steady_hand', state: {} },
+      ],
+    };
+    // 6 jokers, capacity 6: a second ample brings its own slot, so it does fit (7/7).
+    expect(jokerFits(sixth, 'ample')).toBe(true);
+    expect(jokerFits(sixth)).toBe(false);
   });
 });

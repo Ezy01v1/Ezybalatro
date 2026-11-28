@@ -1,5 +1,5 @@
 import { DEFAULT_RUN_CONFIG, type JokerInstance, type RunConfig } from '@naipes/engine';
-import { act, render, screen } from '@testing-library/react-native';
+import { act, render, screen, within } from '@testing-library/react-native';
 import { ShopScreen } from '@/components/roguelike/ShopScreen';
 import { useGame } from '@/game/store';
 import { es } from '@/i18n/es';
@@ -61,5 +61,40 @@ describe('joker slots with the ample edition', () => {
     });
     expect(error).toBeNull();
     expect(useGame.getState().run!.jokers).toHaveLength(6);
+  });
+});
+
+describe('buying an offer that brings its own slot', () => {
+  const withOffer = (edition: string) => {
+    reachShop([1, 2, 3, 4, 5].map((n) => joker(n)));
+    const run = useGame.getState().run!;
+    useGame.setState({
+      run: {
+        ...run,
+        nextJokerNumber: 6,
+        shop: [
+          { kind: 'joker', jokerId: 'minimalist', price: 6, sold: false, edition },
+          ...run.shop.slice(1),
+        ],
+      },
+    });
+  };
+
+  it('an ample offer is not marked as full and can be bought at 5/5', async () => {
+    withOffer('ample');
+    await render(<ConnectedShop />);
+    expect(within(screen.getByTestId('offer-0')).queryByText(es.shop.full)).toBeNull();
+    let error: unknown = 'unset';
+    await act(async () => {
+      error = useGame.getState().buy(0);
+    });
+    expect(error).toBeNull();
+    expect(useGame.getState().run!.jokers).toHaveLength(6);
+  });
+
+  it('any other edition is still marked as full at 5/5', async () => {
+    withOffer('foil');
+    await render(<ConnectedShop />);
+    expect(within(screen.getByTestId('offer-0')).getByText(es.shop.full)).toBeTruthy();
   });
 });

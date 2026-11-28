@@ -68,6 +68,7 @@ export {
   createRun,
   findConsumable,
   isCardDebuffed,
+  jokerFits,
   jokerSellValue,
   jokerSlotsFor,
   previewPlay,

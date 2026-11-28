@@ -1,6 +1,6 @@
 import type { JokerInstance } from '@naipes/engine';
 import { useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   LinearTransition,
@@ -18,7 +18,17 @@ import { colors, layout, motion, radii, spacing } from '@/theme/tokens';
 import { Text } from '@/ui/primitives';
 
 const SLOT_GAP = spacing.sm;
-const STEP = layout.jokerSlot.width + SLOT_GAP;
+/** Below this a joker cannot be tapped or read: more slots than this fit are not shrunk further. */
+const MIN_SLOT_WIDTH = 30;
+
+/**
+ * Width of each slot so `count` slots fit in `available` px (the window minus the screen padding):
+ * the normal width while they fit, narrower when editions or vouchers open more than five.
+ */
+export function railSlotWidth(count: number, available: number): number {
+  const fit = Math.floor((available - SLOT_GAP * Math.max(0, count - 1)) / Math.max(1, count));
+  return Math.max(MIN_SLOT_WIDTH, Math.min(layout.jokerSlot.width, fit));
+}
 
 export interface JokerRailProps {
   jokers: readonly JokerInstance[];
@@ -40,6 +50,8 @@ export function JokerRail({
   onMove,
 }: JokerRailProps) {
   const empty = Math.max(0, slots - jokers.length);
+  const { width: window } = useWindowDimensions();
+  const slotWidth = railSlotWidth(Math.max(slots, jokers.length), window - 2 * spacing.lg);
   return (
     <View
       style={styles.rail}
@@ -52,6 +64,7 @@ export function JokerRail({
           joker={joker}
           index={index}
           count={jokers.length}
+          width={slotWidth}
           pulseKey={pulses[joker.instanceId] ?? 0}
           label={labels[joker.instanceId]}
           onPress={onPressJoker}
@@ -61,7 +74,7 @@ export function JokerRail({
       {Array.from({ length: empty }, (_, i) => (
         <View
           key={`empty-${i}`}
-          style={[styles.slot, styles.empty]}
+          style={[styles.slot, styles.empty, { width: slotWidth }]}
           accessibilityLabel={es.game.emptySlot}
         >
           <Text
@@ -82,13 +95,14 @@ interface SlotProps {
   joker: JokerInstance;
   index: number;
   count: number;
+  width: number;
   pulseKey: number;
   label: string | undefined;
   onPress?: (instanceId: string) => void;
   onMove?: (from: number, to: number) => void;
 }
 
-function JokerSlot({ joker, index, count, pulseKey, label, onPress, onMove }: SlotProps) {
+function JokerSlot({ joker, index, count, width, pulseKey, label, onPress, onMove }: SlotProps) {
   const reduced = useReducedMotion();
   const dragX = useSharedValue(0);
   const lifted = useSharedValue(0);
@@ -134,7 +148,10 @@ function JokerSlot({ joker, index, count, pulseKey, label, onPress, onMove }: Sl
       dragX.value = e.translationX;
     })
     .onEnd((e) => {
-      const target = Math.max(0, Math.min(count - 1, index + Math.round(e.translationX / STEP)));
+      const target = Math.max(
+        0,
+        Math.min(count - 1, index + Math.round(e.translationX / (width + SLOT_GAP))),
+      );
       if (onMove && target !== index) scheduleOnRN(onMove, index, target);
     })
     .onFinalize(() => {
@@ -173,6 +190,7 @@ function JokerSlot({ joker, index, count, pulseKey, label, onPress, onMove }: Sl
           style={[
             styles.slot,
             styles.filled,
+            { width },
             edition ? { borderColor: editionColor(edition) } : null,
             animated,
           ]}

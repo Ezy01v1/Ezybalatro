@@ -1,6 +1,7 @@
 import {
   DEFAULT_CONTENT,
   findConsumable,
+  jokerFits,
   jokerSellValue,
   jokerSlotsFor,
   type RunState,
@@ -116,7 +117,7 @@ function OfferCard({
   const missing = offer.price - run.money;
   const full =
     offer.kind === 'joker'
-      ? run.jokers.length >= jokerSlotsFor(run)
+      ? !jokerFits(run, offer.edition)
       : run.consumables.length >= run.config.consumableSlots;
   const fullText = offer.kind === 'joker' ? es.shop.full : es.shop.fullConsumables;
   const status = offer.sold

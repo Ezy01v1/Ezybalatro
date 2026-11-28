@@ -740,7 +740,7 @@ function buy(
       consumableId: offer.consumableId,
     });
   } else {
-    if (d.jokers.length >= jokerSlotsFor(d, content))
+    if (!jokerFits(d, offer.edition, content))
       return err('NO_JOKER_SLOT', 'All joker slots are full');
     const def = content.jokers.find((j) => j.id === offer.jokerId);
     d.jokers.push({
@@ -1089,6 +1089,19 @@ export function jokerSellValue(
   const base = content.jokers.find((j) => j.id === joker.jokerId)?.cost ?? 2;
   const surcharge = content.editions.find((e) => e.id === joker.edition)?.cost ?? 0;
   return Math.max(1, Math.floor((base + surcharge) / 2));
+}
+
+/**
+ * Is there room for one more joker with this edition? An edition that opens slots (`ample`) brings
+ * its own, so it fits a full rail.
+ */
+export function jokerFits(
+  state: Pick<RunState, 'config' | 'jokers'>,
+  edition?: string,
+  content: RunContent = DEFAULT_CONTENT,
+): boolean {
+  const own = content.editions.find((e) => e.id === edition)?.extraJokerSlots ?? 0;
+  return state.jokers.length < jokerSlotsFor(state, content) + own;
 }
 
 /** Joker slots in use right now: the config's plus those opened by the editions of owned jokers. */
