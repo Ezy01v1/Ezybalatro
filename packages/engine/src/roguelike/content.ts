@@ -1,12 +1,16 @@
 import type { Rank } from '../cards';
 import type {
   BossDefinition,
+  ConsumableDefinition,
+  EditionDefinition,
   EnhancementDefinition,
   HandTypeStats,
   JokerDefinition,
   RunContent,
+  PackDefinition,
+  VoucherDefinition,
 } from './types';
-import type { HandCategory } from '../hands/hand-category';
+import { HAND_CATEGORIES, type HandCategory } from '../hands/hand-category';
 
 /**
  * Roguelike content as data. Values are original and meant to be tuned with the balance simulation.
@@ -187,14 +191,155 @@ export const JOKERS: readonly JokerDefinition[] = [
     cost: 4,
     onRoundEnd: (_self, ctx) => (ctx.handsLeft > 0 ? { money: ctx.handsLeft } : undefined),
   },
+  // "Eco de la Corte": face cards that score are played once more.
+  {
+    id: 'court_echo',
+    rarity: 'uncommon',
+    cost: 7,
+    retriggers: (_self, _ctx, card) => (card.rank >= 11 && card.rank <= 13 ? 1 : 0),
+  },
+  // "Primer Bis": the first scoring card is played once more.
+  {
+    id: 'first_encore',
+    rarity: 'uncommon',
+    cost: 6,
+    retriggers: (_self, ctx, card) => (card.id === ctx.scoring[0]?.id ? 1 : 0),
+  },
+  // "Último Bis": the last scoring card is played once more.
+  {
+    id: 'last_encore',
+    rarity: 'uncommon',
+    cost: 6,
+    retriggers: (_self, ctx, card) => (card.id === ctx.scoring.at(-1)?.id ? 1 : 0),
+  },
+  // "Eco del Corazón": scoring hearts are played once more.
+  {
+    id: 'heart_echo',
+    rarity: 'common',
+    cost: 5,
+    retriggers: (_self, _ctx, card) => (card.suit === 'h' ? 1 : 0),
+  },
+  // "Moneda de la Suerte": 1 in 4 chance of +$4 each hand.
+  {
+    id: 'lucky_coin',
+    rarity: 'common',
+    cost: 5,
+    onHandScored: (_self, ctx) => (ctx.roll(1, 4) ? { money: 4 } : undefined),
+  },
+  // "Dado Cargado": 1 in 8 chance of ×2 mult each hand.
+  {
+    id: 'loaded_die',
+    rarity: 'uncommon',
+    cost: 7,
+    onHandScored: (_self, ctx) => (ctx.roll(1, 8) ? { xMult: 2 } : undefined),
+  },
+  // "Chispa": each scoring card has a 1 in 3 chance of +3 mult.
+  {
+    id: 'spark',
+    rarity: 'common',
+    cost: 4,
+    onCardScored: (_self, ctx) => (ctx.roll(1, 3) ? { mult: 3 } : undefined),
+  },
 ];
 
-/** Sample card enhancements (cards get them through consumables in a later phase). */
+/** Card enhancements (cards get them through consumables). */
 export const ENHANCEMENTS: readonly EnhancementDefinition[] = [
   // "Reforzada": +25 chips when it scores.
   { id: 'reinforced', onScored: () => ({ chips: 25 }) },
   // "Ancla": ×1.5 mult while it stays in hand.
   { id: 'anchor', onHeld: () => ({ xMult: 1.5 }) },
+  // "Cargada": +4 mult when it scores.
+  { id: 'charged', onScored: () => ({ mult: 4 }) },
+  // "Dorada": +$2 when it scores.
+  { id: 'gilded', onScored: () => ({ money: 2 }) },
+  // "Pesada": +30 chips while it stays in hand.
+  { id: 'heavy', onHeld: () => ({ chips: 30 }) },
+  // "Volátil": ×1.3 mult when it scores.
+  { id: 'volatile', onScored: () => ({ xMult: 1.3 }) },
+  // "Moneda": 1 in 2 chance of +20 mult when it scores.
+  { id: 'coin', onScored: (_card, ctx) => (ctx.roll(1, 2) ? { mult: 20 } : undefined) },
+];
+
+/** Joker editions, rolled on shop offers. Proposed es-419 names in the comments. */
+export const EDITIONS: readonly EditionDefinition[] = [
+  // "Lámina": +50 chips.
+  { id: 'foil', cost: 2, effect: { chips: 50 } },
+  // "Aura": +10 mult.
+  { id: 'holo', cost: 3, effect: { mult: 10 } },
+  // "Iridiscente": ×1.5 mult.
+  { id: 'poly', cost: 4, effect: { xMult: 1.5 } },
+  // "Amplio": +1 joker slot while owned.
+  { id: 'ample', cost: 4, extraJokerSlots: 1 },
+];
+
+/**
+ * Consumables (22): 9 studies (one per hand type, usable in the shop) and 13 that act on cards
+ * from the hand (usable during a blind). Comments: proposed es-419 name and effect.
+ */
+export const CONSUMABLES: readonly ConsumableDefinition[] = [
+  // "Estudio de <mano>": raises that hand type by one level. One per hand category.
+  ...HAND_CATEGORIES.map((hand): ConsumableDefinition => ({
+    id: `study_${hand}`,
+    cost: 3,
+    targets: null,
+    ops: [{ op: 'levelUpHand', hand }],
+  })),
+  // "Refuerzo": gives 1-2 cards the "Reforzada" enhancement.
+  {
+    id: 'reinforce',
+    cost: 3,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'reinforced' }],
+  },
+  // "Carga": gives 1-2 cards the "Cargada" enhancement.
+  {
+    id: 'charge',
+    cost: 4,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'charged' }],
+  },
+  // "Dorado": gives 1-2 cards the "Dorada" enhancement.
+  {
+    id: 'gild',
+    cost: 3,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'gilded' }],
+  },
+  // "Lastre": gives 1-2 cards the "Pesada" enhancement.
+  {
+    id: 'weigh',
+    cost: 3,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'heavy' }],
+  },
+  // "Anclaje": gives 1-2 cards the "Ancla" enhancement.
+  {
+    id: 'anchor_card',
+    cost: 4,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'anchor' }],
+  },
+  // "Volatilizar": gives 1-2 cards the "Volátil" enhancement.
+  {
+    id: 'volatilize',
+    cost: 5,
+    targets: { min: 1, max: 2 },
+    ops: [{ op: 'enhanceCards', enhancement: 'volatile' }],
+  },
+  // "Tinta de Picas": turns 1-3 cards into spades.
+  { id: 'paint_s', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 's' }] },
+  // "Tinta de Corazones": turns 1-3 cards into hearts.
+  { id: 'paint_h', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 'h' }] },
+  // "Tinta de Diamantes": turns 1-3 cards into diamonds.
+  { id: 'paint_d', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 'd' }] },
+  // "Tinta de Tréboles": turns 1-3 cards into clubs.
+  { id: 'paint_c', cost: 3, targets: { min: 1, max: 3 }, ops: [{ op: 'changeSuit', suit: 'c' }] },
+  // "Ascenso": raises the rank of 1-2 cards by one.
+  { id: 'elevate', cost: 3, targets: { min: 1, max: 2 }, ops: [{ op: 'shiftRank', delta: 1 }] },
+  // "Chatarra": destroys 1-2 cards from the deck.
+  { id: 'scrap', cost: 2, targets: { min: 1, max: 2 }, ops: [{ op: 'destroyCards' }] },
+  // "Gemelo": adds a copy of 1 card to the deck.
+  { id: 'twin', cost: 4, targets: { min: 1, max: 1 }, ops: [{ op: 'duplicateCard' }] },
 ];
 
 /** The 5 MVP bosses. Each hinders a different strategy. */
@@ -211,9 +356,42 @@ export const BOSSES: readonly BossDefinition[] = [
   { id: 'mask', debuffRanks: [11, 12, 13] },
 ];
 
+/**
+ * The 3 MVP packs. Each opens at once when bought; `kind` says what the options are. Comments:
+ * proposed es-419 name.
+ */
+export const PACKS: readonly PackDefinition[] = [
+  // "Sobre de Comodines": 3 jokers, take 1.
+  { id: 'pack_joker', cost: 6, kind: 'joker', size: 3, picks: 1 },
+  // "Sobre de Consumibles": 3 consumables, take 1.
+  { id: 'pack_consumable', cost: 4, kind: 'consumable', size: 3, picks: 1 },
+  // "Sobre de Cartas": 3 new enhanced cards for the deck, take 1.
+  { id: 'pack_card', cost: 5, kind: 'card', size: 3, picks: 1 },
+];
+
+/** The 6 MVP vouchers: permanent rule changes, one offered per shop, never repeated. */
+export const VOUCHERS: readonly VoucherDefinition[] = [
+  // "Mano Extra": +1 hand per blind (from the next blind).
+  { id: 'extra_hand', cost: 10, modifiers: [{ key: 'hands', delta: 1 }] },
+  // "Descarte Extra": +1 discard per blind (from the next blind).
+  { id: 'extra_discard', cost: 8, modifiers: [{ key: 'discards', delta: 1 }] },
+  // "Palco de Comodines": +1 joker slot.
+  { id: 'joker_slot', cost: 10, modifiers: [{ key: 'jokerSlots', delta: 1 }] },
+  // "Bolsillo Extra": +1 consumable slot.
+  { id: 'consumable_slot', cost: 6, modifiers: [{ key: 'consumableSlots', delta: 1 }] },
+  // "Renovación Barata": rerolls cost $1 less.
+  { id: 'cheap_reroll', cost: 6, modifiers: [{ key: 'rerollBaseCost', delta: -1 }] },
+  // "Banca Generosa": interest cap +$1.
+  { id: 'interest_cap', cost: 8, modifiers: [{ key: 'interestCap', delta: 1 }] },
+];
+
 export const DEFAULT_CONTENT: RunContent = {
   jokers: JOKERS,
   enhancements: ENHANCEMENTS,
+  editions: EDITIONS,
   bosses: BOSSES,
+  consumables: CONSUMABLES,
+  packs: PACKS,
+  vouchers: VOUCHERS,
   handTypes: HAND_TYPES,
 };

@@ -12,6 +12,9 @@ const SOURCES = {
   win: require('../../assets/sfx/win.wav'),
   lose: require('../../assets/sfx/lose.wav'),
   coin: require('../../assets/sfx/coin.wav'),
+  flip: require('../../assets/sfx/flip.wav'),
+  turn: require('../../assets/sfx/turn.wav'),
+  check: require('../../assets/sfx/check.wav'),
 } as const;
 
 export type Sound = keyof typeof SOURCES;
@@ -42,6 +45,7 @@ const safe = (promise: () => Promise<void>) => {
 };
 
 export const haptics = {
+  light: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   select: () => safe(() => Haptics.selectionAsync()),
   limit: () => safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)),
   play: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)),

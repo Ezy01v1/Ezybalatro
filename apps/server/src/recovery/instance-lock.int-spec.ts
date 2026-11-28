@@ -71,6 +71,32 @@ describe('InstanceLock', () => {
     await expect(acquired).rejects.toThrow(/abort/i);
   });
 
+  it('release stops an acquire that is still waiting: it never takes the lock afterwards', async () => {
+    const first = lock();
+    await first.acquire();
+    const second = lock();
+    const waiting = second.acquire();
+    const outcome = waiting.then(
+      () => 'acquired',
+      () => 'rejected',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await second.release();
+    expect(await Promise.race([outcome, new Promise((r) => setTimeout(() => r('pending'), 500))])).toBe(
+      'rejected',
+    );
+
+    await first.release();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const admin = new Client({ connectionString: db.url });
+    await admin.connect();
+    const held = await admin.query(
+      `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted`,
+    );
+    await admin.end();
+    expect(held.rows[0].n).toBe(0);
+  });
+
   it('release without acquire is a no-op', async () => {
     await expect(lock().release()).resolves.toBeUndefined();
   });

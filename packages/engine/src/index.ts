@@ -37,14 +37,19 @@ export type * from './roguelike/types';
 export {
   BOSSES,
   CARD_CHIPS,
+  CONSUMABLES,
   DEFAULT_CONTENT,
+  EDITIONS,
   ENHANCEMENTS,
   HAND_TYPES,
   JOKERS,
+  PACKS,
+  VOUCHERS,
 } from './roguelike/content';
 export type { ScoreInput, ScoreResult, ScoreSource, ScoreStep } from './roguelike/scoring';
-export { handBase, scoreHand } from './roguelike/scoring';
+export { MAX_RETRIGGERS, handBase, scoreHand } from './roguelike/scoring';
 export type {
+  OpenPack,
   RunAction,
   RunConfig,
   RunErrorCode,
@@ -59,9 +64,13 @@ export type { PlayPreview } from './roguelike/run';
 export {
   DEFAULT_RUN_CONFIG,
   RUN_STATE_VERSION,
+  consumableSellValue,
   createRun,
+  findConsumable,
   isCardDebuffed,
+  jokerFits,
   jokerSellValue,
+  jokerSlotsFor,
   previewPlay,
   replayRun,
   runReducer,

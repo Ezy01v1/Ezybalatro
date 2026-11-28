@@ -1,18 +1,24 @@
-import { createStandardDeck, shuffleDeck, SUITS } from '../cards';
+import { createStandardDeck, RANKS, shuffleDeck, SUITS, type Rank } from '../cards';
 import { HAND_CATEGORIES, type HandCategory } from '../hands/hand-category';
 import { evaluatePlayedHand } from '../hands/played-hand';
-import { nextInt } from '../rng';
+import { nextInt, type Rng } from '../rng';
 import { SeededRng, type SeededRngState } from '../seeded-rng';
 import { DEFAULT_CONTENT } from './content';
 import { handBase, scoreHand, type ScoreStep } from './scoring';
 import type {
   BlindKind,
   BossDefinition,
+  ConsumableDefinition,
+  ConsumableInstance,
+  ConsumableOp,
   JokerDefinition,
   JokerEffect,
   JokerInstance,
+  PackDefinition,
+  PackItem,
   RunCard,
   RunContent,
+  VoucherDefinition,
 } from './types';
 
 /** Numbers only, so a config can be stored with the run and replayed. */
@@ -31,18 +37,26 @@ export interface RunConfig {
   readonly discards: number;
   readonly maxCardsPerAction: number;
   readonly jokerSlots: number;
+  readonly consumableSlots: number;
+  /** Cards destroyed by consumables can never take the deck below this size. */
+  readonly minDeckSize: number;
   readonly startingMoney: number;
   readonly shopJokerOffers: number;
-  /** Hand level-up consumables offered per shop visit (distinct hand types). */
+  /** Distinct consumables offered per shop visit. */
   readonly shopConsumableOffers: number;
-  readonly consumablePrice: number;
   /** First reroll of a shop visit costs this much; each further reroll costs `rerollCostStep` more. */
   readonly rerollBaseCost: number;
   readonly rerollCostStep: number;
+  /** Distinct packs offered per shop visit. */
+  readonly shopPackOffers: number;
+  /** Vouchers offered per shop visit (never one already bought). */
+  readonly shopVoucherOffers: number;
+  /** Each joker offer comes with an edition one time in this many (0 = never). */
+  readonly editionOneIn: number;
 }
 
 /** Bumped when the saved shape of `RunState` changes; older saves are discarded. */
-export const RUN_STATE_VERSION = 1;
+export const RUN_STATE_VERSION = 4;
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   antes: 8,
@@ -57,27 +71,52 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   discards: 3,
   maxCardsPerAction: 5,
   jokerSlots: 5,
+  consumableSlots: 2,
+  minDeckSize: 20,
   startingMoney: 4,
   shopJokerOffers: 2,
   shopConsumableOffers: 2,
-  consumablePrice: 3,
   rerollBaseCost: 3,
   rerollCostStep: 1,
+  shopPackOffers: 2,
+  shopVoucherOffers: 1,
+  editionOneIn: 8,
 };
 
 export type ShopOffer =
   | {
       readonly kind: 'joker';
       readonly jokerId: string;
+      /** Includes the edition's surcharge. */
+      readonly price: number;
+      readonly sold: boolean;
+      readonly edition?: string;
+    }
+  | {
+      readonly kind: 'consumable';
+      readonly consumableId: string;
       readonly price: number;
       readonly sold: boolean;
     }
   | {
-      readonly kind: 'levelUp';
-      readonly handType: HandCategory;
+      readonly kind: 'pack';
+      readonly packId: string;
+      readonly price: number;
+      readonly sold: boolean;
+    }
+  | {
+      readonly kind: 'voucher';
+      readonly voucherId: string;
       readonly price: number;
       readonly sold: boolean;
     };
+
+/** A pack being opened: the shop is locked until its picks are taken or it is skipped. */
+export interface OpenPack {
+  readonly packId: string;
+  readonly items: readonly (PackItem & { readonly taken: boolean })[];
+  readonly picksLeft: number;
+}
 
 export type RunStatus = 'in_progress' | 'won' | 'lost' | 'abandoned';
 
@@ -104,6 +143,11 @@ export interface RunState {
   readonly discardsLeft: number;
   readonly money: number;
   readonly jokers: readonly JokerInstance[];
+  readonly consumables: readonly ConsumableInstance[];
+  /** Ids of the vouchers bought so far (their modifiers are already in `config`). */
+  readonly vouchers: readonly string[];
+  /** Set while a bought pack is open. */
+  readonly openPack: OpenPack | null;
   readonly handLevels: Readonly<Record<HandCategory, number>>;
   readonly handsPlayed: number;
   readonly bestHandScore: number;
@@ -114,8 +158,16 @@ export interface RunState {
     readonly deck: SeededRngState;
     readonly shop: SeededRngState;
     readonly boss: SeededRngState;
+    /** Packs, vouchers and pack contents: kept apart so `shop` draws never move. */
+    readonly pack: SeededRngState;
+    /** Luck while scoring (`ctx.roll`): kept apart so a roll never moves the shop or the packs. */
+    readonly score: SeededRngState;
   };
   readonly nextJokerNumber: number;
+  /** Next consumable instance id is `c<n>`. */
+  readonly nextConsumableNumber: number;
+  /** Next card created during the run gets an id from this counter. */
+  readonly nextCardNumber: number;
 }
 
 export type RunAction =
@@ -124,7 +176,17 @@ export type RunAction =
   | { readonly type: 'discard'; readonly cardIds: readonly string[] }
   | { readonly type: 'buy'; readonly offerIndex: number }
   | { readonly type: 'sellJoker'; readonly instanceId: string }
+  /** `cardIds` are hand cards, only for consumables that ask for targets. */
+  | {
+      readonly type: 'applyConsumable';
+      readonly instanceId: string;
+      readonly cardIds?: readonly string[];
+    }
+  | { readonly type: 'sellConsumable'; readonly instanceId: string }
   | { readonly type: 'moveJoker'; readonly from: number; readonly to: number }
+  /** Takes one option of the open pack (the shop stays locked until the picks are used or skipped). */
+  | { readonly type: 'pickFromPack'; readonly itemIndex: number }
+  | { readonly type: 'skipPack' }
   | { readonly type: 'reroll' }
   | { readonly type: 'leaveShop' }
   /** Reorders the hand (the order matters for held-card effects). */
@@ -135,11 +197,17 @@ export type RunErrorCode =
   | 'RUN_OVER'
   | 'INVALID_PHASE'
   | 'INVALID_CARDS'
+  | 'WOULD_EMPTY_HAND'
   | 'NO_DISCARDS_LEFT'
   | 'INVALID_OFFER'
   | 'NOT_ENOUGH_MONEY'
   | 'NO_JOKER_SLOT'
-  | 'INVALID_JOKER';
+  | 'INVALID_JOKER'
+  | 'NO_CONSUMABLE_SLOT'
+  | 'INVALID_CONSUMABLE'
+  | 'PACK_OPEN'
+  | 'NO_PACK_OPEN'
+  | 'INVALID_PACK_ITEM';
 
 export type RunEvent =
   | {
@@ -183,7 +251,18 @@ export type RunEvent =
       readonly nextCost: number;
     }
   | { readonly type: 'bought'; readonly offerIndex: number; readonly money: number }
+  | { readonly type: 'voucherBought'; readonly voucherId: string }
+  | { readonly type: 'packOpened'; readonly packId: string; readonly items: readonly PackItem[] }
+  | { readonly type: 'packPicked'; readonly itemIndex: number }
+  | { readonly type: 'packSkipped' }
   | { readonly type: 'jokerSold'; readonly instanceId: string; readonly money: number }
+  | {
+      readonly type: 'consumableUsed';
+      readonly instanceId: string;
+      readonly consumableId: string;
+      readonly cardIds: readonly string[];
+    }
+  | { readonly type: 'consumableSold'; readonly instanceId: string; readonly money: number }
   | { readonly type: 'runWon' }
   | { readonly type: 'runLost' }
   | { readonly type: 'runAbandoned' };
@@ -205,14 +284,22 @@ export interface RunLog {
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 interface Draft extends Omit<
   Mutable<RunState>,
-  'drawPile' | 'hand' | 'jokers' | 'handLevels' | 'shop' | 'rng'
+  'drawPile' | 'hand' | 'jokers' | 'consumables' | 'vouchers' | 'handLevels' | 'shop' | 'rng'
 > {
   drawPile: RunCard[];
   hand: RunCard[];
   jokers: JokerInstance[];
+  consumables: ConsumableInstance[];
+  vouchers: string[];
   handLevels: Record<HandCategory, number>;
   shop: ShopOffer[];
-  rng: { deck: SeededRngState; shop: SeededRngState; boss: SeededRngState };
+  rng: {
+    deck: SeededRngState;
+    shop: SeededRngState;
+    boss: SeededRngState;
+    pack: SeededRngState;
+    score: SeededRngState;
+  };
 }
 
 const BLIND_ORDER: readonly BlindKind[] = ['small', 'big', 'boss'];
@@ -244,6 +331,9 @@ export function createRun(
     discardsLeft: 0,
     money: config.startingMoney,
     jokers: [],
+    consumables: [],
+    vouchers: [],
+    openPack: null,
     handLevels: Object.fromEntries(HAND_CATEGORIES.map((h) => [h, 1])) as Record<
       HandCategory,
       number
@@ -256,8 +346,12 @@ export function createRun(
       deck: SeededRng.fromSeed(seed, 'deck').getState(),
       shop: SeededRng.fromSeed(seed, 'shop').getState(),
       boss: SeededRng.fromSeed(seed, 'boss').getState(),
+      pack: SeededRng.fromSeed(seed, 'pack').getState(),
+      score: SeededRng.fromSeed(seed, 'score').getState(),
     },
     nextJokerNumber: 1,
+    nextConsumableNumber: 1,
+    nextCardNumber: 1,
   };
   pickBoss(d, content);
   startBlind(d, content, events);
@@ -296,12 +390,25 @@ export function replayRun(
 
 type RunError = { code: RunErrorCode; message: string };
 
+/** Shop actions that wait while a pack is open (`abandon` never does). */
+const PACK_LOCKED: ReadonlySet<RunAction['type']> = new Set([
+  'buy',
+  'reroll',
+  'leaveShop',
+  'sellJoker',
+  'applyConsumable',
+  'sellConsumable',
+  'moveJoker',
+]);
+
 function apply(
   d: Draft,
   action: RunAction,
   content: RunContent,
   events: RunEvent[],
 ): RunError | null {
+  if (d.openPack && PACK_LOCKED.has(action.type))
+    return err('PACK_OPEN', 'Pick from the open pack or skip it first');
   switch (action.type) {
     case 'play':
       return play(d, action.cardIds, content, events);
@@ -311,6 +418,10 @@ function apply(
       return buy(d, action.offerIndex, content, events);
     case 'sellJoker':
       return sellJoker(d, action.instanceId, content, events);
+    case 'applyConsumable':
+      return applyConsumable(d, action.instanceId, action.cardIds ?? [], content, events);
+    case 'sellConsumable':
+      return sellConsumable(d, action.instanceId, content, events);
     case 'moveJoker': {
       const { from, to } = action;
       const valid = (i: number) => Number.isInteger(i) && i >= 0 && i < d.jokers.length;
@@ -319,6 +430,10 @@ function apply(
       d.jokers.splice(to, 0, moved!);
       return null;
     }
+    case 'pickFromPack':
+      return pickFromPack(d, action.itemIndex, content, events);
+    case 'skipPack':
+      return skipPack(d, events);
     case 'reroll':
       return reroll(d, content, events);
     case 'sortHand':
@@ -357,6 +472,7 @@ function play(
   const held = d.hand.filter((c) => !played.includes(c));
   const boss = currentBoss(d, content);
   d.handsPlayed += 1;
+  const scoreRng = new SeededRng(d.rng.score);
   const result = scoreHand(
     {
       played,
@@ -367,10 +483,12 @@ function play(
       handsLeft: d.handsLeft - 1,
       discardsLeft: d.discardsLeft,
       money: d.money,
+      rng: scoreRng,
       ...(boss ? { isDebuffed: debuffRule(boss) } : {}),
     },
     content,
   );
+  d.rng.score = scoreRng.getState();
   d.jokers = [...result.jokers];
   d.money += result.money;
   d.roundScore += result.score;
@@ -393,11 +511,8 @@ function play(
     winRound(d, content, events);
   } else {
     draw(d, events);
-    if (d.handsLeft === 0 || d.hand.length === 0) {
-      d.status = 'lost';
-      d.phase = 'ended';
-      events.push({ type: 'runLost' });
-    }
+    if (d.handsLeft === 0) loseRun(d, events);
+    else loseIfNoCards(d, events);
   }
   return null;
 }
@@ -423,6 +538,7 @@ function discard(
     def.onDiscard?.(self, { discarded, money: d.money }),
   );
   draw(d, events);
+  loseIfNoCards(d, events);
   return null;
 }
 
@@ -493,6 +609,17 @@ function draw(d: Draft, events: RunEvent[]): void {
   if (drawn.length > 0) events.push({ type: 'cardsDrawn', cardIds: drawn.map((c) => c.id) });
 }
 
+function loseRun(d: Draft, events: RunEvent[]): void {
+  d.status = 'lost';
+  d.phase = 'ended';
+  events.push({ type: 'runLost' });
+}
+
+/** Call right after `draw`: an empty hand with nothing left to draw can never play again. */
+function loseIfNoCards(d: Draft, events: RunEvent[]): void {
+  if (d.hand.length === 0) loseRun(d, events);
+}
+
 /** The hand cards for `cardIds`, in that order, or null if the selection is invalid. */
 function pickFromHand(d: Draft, cardIds: readonly string[]): RunCard[] | null {
   if (
@@ -507,7 +634,10 @@ function pickFromHand(d: Draft, cardIds: readonly string[]): RunCard[] | null {
 
 // ---------------------------------------------------------------- shop
 
-/** Random jokers (not owned, no repeats) and level-up consumables (distinct hand types). */
+/**
+ * Random jokers (not owned, no repeats), then distinct consumables. The jokers are drawn first so
+ * the shop sub-stream order of the jokers never moves (saved seeds rely on it).
+ */
 function rollOffers(d: Draft, content: RunContent): ShopOffer[] {
   const rng = new SeededRng(d.rng.shop);
   const owned = new Set(d.jokers.map((j) => j.jokerId));
@@ -517,22 +647,52 @@ function rollOffers(d: Draft, content: RunContent): ShopOffer[] {
     const [joker] = pool.splice(nextInt(rng, pool.length), 1);
     offers.push({ kind: 'joker', jokerId: joker!.id, price: joker!.cost, sold: false });
   }
-  const handTypes = [...HAND_CATEGORIES];
-  for (let i = 0; i < d.config.shopConsumableOffers && handTypes.length > 0; i++) {
-    const [handType] = handTypes.splice(nextInt(rng, handTypes.length), 1);
+  const consumablePool = [...content.consumables];
+  for (let i = 0; i < d.config.shopConsumableOffers && consumablePool.length > 0; i++) {
+    const [consumable] = consumablePool.splice(nextInt(rng, consumablePool.length), 1);
     offers.push({
-      kind: 'levelUp',
-      handType: handType!,
-      price: d.config.consumablePrice,
+      kind: 'consumable',
+      consumableId: consumable!.id,
+      price: consumable!.cost,
       sold: false,
     });
+  }
+  // Editions come last, after every other draw of this visit, so they never move which cards
+  // are offered (only what the next visit or reroll draws).
+  if (d.config.editionOneIn > 0 && content.editions.length > 0) {
+    for (const [i, offer] of offers.entries()) {
+      if (offer.kind !== 'joker' || nextInt(rng, d.config.editionOneIn) !== 0) continue;
+      const edition = content.editions[nextInt(rng, content.editions.length)]!;
+      offers[i] = { ...offer, edition: edition.id, price: offer.price + edition.cost };
+    }
   }
   d.rng.shop = rng.getState();
   return offers;
 }
 
+/**
+ * Distinct packs, then vouchers not bought yet, from the pack sub-stream. Rolled once per shop
+ * visit: a reroll keeps them.
+ */
+function rollLootOffers(d: Draft, content: RunContent): ShopOffer[] {
+  const rng = new SeededRng(d.rng.pack);
+  const offers: ShopOffer[] = [];
+  const packPool = [...content.packs];
+  for (let i = 0; i < d.config.shopPackOffers && packPool.length > 0; i++) {
+    const [pack] = packPool.splice(nextInt(rng, packPool.length), 1);
+    offers.push({ kind: 'pack', packId: pack!.id, price: pack!.cost, sold: false });
+  }
+  const voucherPool = content.vouchers.filter((v) => !d.vouchers.includes(v.id));
+  for (let i = 0; i < d.config.shopVoucherOffers && voucherPool.length > 0; i++) {
+    const [voucher] = voucherPool.splice(nextInt(rng, voucherPool.length), 1);
+    offers.push({ kind: 'voucher', voucherId: voucher!.id, price: voucher!.cost, sold: false });
+  }
+  d.rng.pack = rng.getState();
+  return offers;
+}
+
 function openShop(d: Draft, content: RunContent, events: RunEvent[]): void {
-  const offers = rollOffers(d, content);
+  const offers = [...rollOffers(d, content), ...rollLootOffers(d, content)];
   d.shop = offers;
   d.rerollCost = d.config.rerollBaseCost;
   d.phase = 'shop';
@@ -552,22 +712,176 @@ function buy(
   const offer = d.shop[offerIndex];
   if (!offer || offer.sold) return err('INVALID_OFFER', 'No such offer');
   if (d.money < offer.price) return err('NOT_ENOUGH_MONEY', 'Not enough money');
-  if (offer.kind === 'joker') {
-    if (d.jokers.length >= d.config.jokerSlots)
+  let opened: { packId: string; items: PackItem[] } | null = null;
+  if (offer.kind === 'voucher') {
+    const voucher = content.vouchers.find((v) => v.id === offer.voucherId);
+    if (!voucher) return err('INVALID_OFFER', 'Unknown voucher');
+    applyVoucher(d, voucher);
+  } else if (offer.kind === 'pack') {
+    const pack = content.packs.find((p) => p.id === offer.packId);
+    if (!pack) return err('INVALID_OFFER', 'Unknown pack');
+    if (pack.kind === 'joker' && d.jokers.length >= jokerSlotsFor(d, content))
+      return err('NO_JOKER_SLOT', 'All joker slots are full');
+    if (pack.kind === 'consumable' && d.consumables.length >= d.config.consumableSlots)
+      return err('NO_CONSUMABLE_SLOT', 'All consumable slots are full');
+    const items = rollPackItems(d, pack, content);
+    if (items.length === 0) return err('INVALID_OFFER', 'This pack has nothing to offer');
+    d.openPack = {
+      packId: pack.id,
+      items: items.map((item) => ({ ...item, taken: false })),
+      picksLeft: Math.min(pack.picks, items.length),
+    };
+    opened = { packId: pack.id, items };
+  } else if (offer.kind === 'consumable') {
+    if (d.consumables.length >= d.config.consumableSlots)
+      return err('NO_CONSUMABLE_SLOT', 'All consumable slots are full');
+    d.consumables.push({
+      instanceId: `c${d.nextConsumableNumber++}`,
+      consumableId: offer.consumableId,
+    });
+  } else {
+    if (!jokerFits(d, offer.edition, content))
       return err('NO_JOKER_SLOT', 'All joker slots are full');
     const def = content.jokers.find((j) => j.id === offer.jokerId);
     d.jokers.push({
       instanceId: `j${d.nextJokerNumber++}`,
       jokerId: offer.jokerId,
       state: { ...def?.initialState },
+      ...(offer.edition ? { edition: offer.edition } : {}),
     });
-  } else {
-    d.handLevels[offer.handType] += 1;
   }
   d.money -= offer.price;
   d.shop[offerIndex] = { ...offer, sold: true };
   events.push({ type: 'bought', offerIndex, money: d.money });
+  if (offer.kind === 'voucher') events.push({ type: 'voucherBought', voucherId: offer.voucherId });
+  if (opened) events.push({ type: 'packOpened', ...opened });
   return null;
+}
+
+// ---------------------------------------------------------------- packs
+
+/** Up to `count` distinct entries of `pool`, drawn at random. */
+function drawDistinct<T>(rng: Rng, pool: readonly T[], count: number): T[] {
+  const rest = [...pool];
+  const drawn: T[] = [];
+  for (let i = 0; i < count && rest.length > 0; i++)
+    drawn.push(rest.splice(nextInt(rng, rest.length), 1)[0]!);
+  return drawn;
+}
+
+/**
+ * The options of a freshly opened pack, drawn from the pack sub-stream: one `switch` on the pack
+ * kind, never on a pack id. Fewer than `size` when the catalog has fewer candidates.
+ */
+function rollPackItems(d: Draft, pack: PackDefinition, content: RunContent): PackItem[] {
+  const rng = new SeededRng(d.rng.pack);
+  let items: PackItem[];
+  switch (pack.kind) {
+    case 'joker': {
+      // Not owned and not on sale in the shop either: buying a joker the pack also offered
+      // would own it twice.
+      const taken = new Set(d.jokers.map((j) => j.jokerId));
+      for (const offer of d.shop)
+        if (offer.kind === 'joker' && !offer.sold) taken.add(offer.jokerId);
+      const pool = content.jokers.filter((j) => !taken.has(j.id));
+      items = drawDistinct(rng, pool, pack.size).map((j) => ({ kind: 'joker', jokerId: j.id }));
+      break;
+    }
+    case 'consumable':
+      items = drawDistinct(rng, content.consumables, pack.size).map((c) => ({
+        kind: 'consumable',
+        consumableId: c.id,
+      }));
+      break;
+    case 'card': {
+      const faces = SUITS.flatMap((suit) => RANKS.map((rank) => ({ suit, rank })));
+      items =
+        content.enhancements.length === 0
+          ? []
+          : drawDistinct(rng, faces, pack.size).map((face) => ({
+              kind: 'card',
+              ...face,
+              enhancement: content.enhancements[nextInt(rng, content.enhancements.length)]!.id,
+            }));
+      break;
+    }
+    default:
+      return unreachable(pack.kind);
+  }
+  d.rng.pack = rng.getState();
+  return items;
+}
+
+/** Takes one option of the open pack. Fails without changing anything (the draft is dropped). */
+function pickFromPack(
+  d: Draft,
+  itemIndex: number,
+  content: RunContent,
+  events: RunEvent[],
+): RunError | null {
+  const open = d.openPack;
+  if (!open) return err('NO_PACK_OPEN', 'There is no open pack');
+  const item = open.items[itemIndex];
+  if (!item || item.taken) return err('INVALID_PACK_ITEM', 'No such option');
+  switch (item.kind) {
+    case 'joker': {
+      if (d.jokers.length >= jokerSlotsFor(d, content))
+        return err('NO_JOKER_SLOT', 'All joker slots are full');
+      const def = content.jokers.find((j) => j.id === item.jokerId);
+      d.jokers.push({
+        instanceId: `j${d.nextJokerNumber++}`,
+        jokerId: item.jokerId,
+        state: { ...def?.initialState },
+      });
+      break;
+    }
+    case 'consumable':
+      if (d.consumables.length >= d.config.consumableSlots)
+        return err('NO_CONSUMABLE_SLOT', 'All consumable slots are full');
+      d.consumables.push({
+        instanceId: `c${d.nextConsumableNumber++}`,
+        consumableId: item.consumableId,
+      });
+      break;
+    case 'card':
+      d.deck = [
+        ...d.deck,
+        {
+          id: `x${d.nextCardNumber++}`,
+          suit: item.suit,
+          rank: item.rank,
+          enhancement: item.enhancement,
+        },
+      ];
+      break;
+    default:
+      return unreachable(item);
+  }
+  const items = open.items.map((it, i) => (i === itemIndex ? { ...it, taken: true } : it));
+  const picksLeft = open.picksLeft - 1;
+  d.openPack =
+    picksLeft <= 0 || items.every((it) => it.taken) ? null : { ...open, items, picksLeft };
+  events.push({ type: 'packPicked', itemIndex });
+  return null;
+}
+
+function skipPack(d: Draft, events: RunEvent[]): RunError | null {
+  if (!d.openPack) return err('NO_PACK_OPEN', 'There is no open pack');
+  d.openPack = null;
+  events.push({ type: 'packSkipped' });
+  return null;
+}
+
+/**
+ * The single interpreter of voucher modifiers: adds each `delta` to its config number (never below
+ * 0) on a new config object. The config in `RunState` is shared with earlier states.
+ */
+function applyVoucher(d: Draft, voucher: VoucherDefinition): void {
+  for (const { key, delta } of voucher.modifiers) {
+    d.config = { ...d.config, [key]: Math.max(0, d.config[key] + delta) };
+    if (key === 'rerollBaseCost') d.rerollCost = Math.max(0, d.rerollCost + delta);
+  }
+  d.vouchers.push(voucher.id);
 }
 
 function reroll(d: Draft, content: RunContent, events: RunEvent[]): RunError | null {
@@ -575,7 +889,10 @@ function reroll(d: Draft, content: RunContent, events: RunEvent[]): RunError | n
   if (d.money < d.rerollCost) return err('NOT_ENOUGH_MONEY', 'Not enough money');
   d.money -= d.rerollCost;
   d.rerollCost += d.config.rerollCostStep;
-  d.shop = rollOffers(d, content);
+  d.shop = [
+    ...rollOffers(d, content),
+    ...d.shop.filter((o) => o.kind === 'pack' || o.kind === 'voucher'),
+  ];
   events.push({ type: 'shopRerolled', offers: d.shop, money: d.money, nextCost: d.rerollCost });
   return null;
 }
@@ -596,15 +913,208 @@ function sellJoker(
   return null;
 }
 
+// ---------------------------------------------------------------- consumables
+
+/**
+ * Uses a consumable from the inventory. Consumables without targets work in the shop and in a
+ * blind; those that ask for cards only work in a blind, on cards from the hand. On error the
+ * caller discards the draft, so a failed operation never leaks a change.
+ */
+function applyConsumable(
+  d: Draft,
+  instanceId: string,
+  cardIds: readonly string[],
+  content: RunContent,
+  events: RunEvent[],
+): RunError | null {
+  const index = d.consumables.findIndex((c) => c.instanceId === instanceId);
+  const instance = d.consumables[index];
+  if (!instance) return err('INVALID_CONSUMABLE', 'No such consumable');
+  const def = findConsumable(instance.consumableId, content);
+  if (!def) return err('INVALID_CONSUMABLE', 'Unknown consumable');
+
+  if (def.targets === null) {
+    if (cardIds.length > 0) return err('INVALID_CARDS', 'This consumable takes no cards');
+  } else {
+    if (d.phase !== 'blind') return err('INVALID_PHASE', 'This consumable needs cards from a hand');
+    const { min, max } = def.targets;
+    if (
+      cardIds.length < min ||
+      cardIds.length > max ||
+      new Set(cardIds).size !== cardIds.length ||
+      !cardIds.every((id) => d.hand.some((c) => c.id === id))
+    )
+      return err(
+        'INVALID_CARDS',
+        min === max
+          ? `Select exactly ${min} ${min === 1 ? 'card' : 'different cards'} from your hand`
+          : `Select ${min} to ${max} different cards from your hand`,
+      );
+  }
+
+  // The event goes first so that events of the operations (cards drawn) follow it.
+  d.consumables.splice(index, 1);
+  events.push({ type: 'consumableUsed', instanceId, consumableId: def.id, cardIds: [...cardIds] });
+  for (const op of def.ops) {
+    const error = applyOp(d, op, cardIds, content, events);
+    if (error) return error;
+  }
+  return null;
+}
+
+/** The single interpreter of consumable operations: switches on `op.op` only, never on an id. */
+function applyOp(
+  d: Draft,
+  op: ConsumableOp,
+  targetIds: readonly string[],
+  content: RunContent,
+  events: RunEvent[],
+): RunError | null {
+  switch (op.op) {
+    case 'levelUpHand':
+      d.handLevels[op.hand] += 1;
+      return null;
+    case 'enhanceCards':
+      if (!content.enhancements.some((e) => e.id === op.enhancement))
+        return err('INVALID_CONSUMABLE', 'Unknown enhancement');
+      return replaceCards(d, targetIds, (card) => ({ ...card, enhancement: op.enhancement }));
+    case 'changeSuit':
+      return replaceCards(d, targetIds, (card) => ({ ...card, suit: op.suit }));
+    case 'shiftRank':
+      return replaceCards(d, targetIds, (card) => {
+        const rank = card.rank + op.delta;
+        return (RANKS as readonly number[]).includes(rank) ? { ...card, rank: rank as Rank } : null;
+      });
+    case 'destroyCards':
+      return destroyCards(d, targetIds, events);
+    case 'duplicateCard':
+      return duplicateCards(d, targetIds);
+    default:
+      return unreachable(op);
+  }
+}
+
+/**
+ * Swaps each target for its changed copy (same `id`) in the hand and in the deck, so the change
+ * lasts for the rest of the run. `change` returns null when the card cannot take it; nothing is
+ * replaced then.
+ */
+function replaceCards(
+  d: Draft,
+  ids: readonly string[],
+  change: (card: RunCard) => RunCard | null,
+): RunError | null {
+  const changed = new Map<string, RunCard>();
+  for (const id of ids) {
+    const card = d.hand.find((c) => c.id === id);
+    const next = card ? change(card) : null;
+    if (!next) return err('INVALID_CARDS', 'A selected card cannot take that change');
+    changed.set(id, next);
+  }
+  const swap = (card: RunCard) => changed.get(card.id) ?? card;
+  d.hand = d.hand.map(swap);
+  d.deck = d.deck.map(swap);
+  return null;
+}
+
+/** Removes the targets from the hand and the deck for good, then refills the hand. */
+function destroyCards(d: Draft, ids: readonly string[], events: RunEvent[]): RunError | null {
+  if (d.deck.length - ids.length < d.config.minDeckSize)
+    return err('INVALID_CARDS', `The deck cannot go below ${d.config.minDeckSize} cards`);
+  const gone = new Set(ids);
+  const kept = d.hand.filter((c) => !gone.has(c.id)).length;
+  if (kept + Math.min(d.drawPile.length, Math.max(0, d.handSize - kept)) === 0)
+    return err('WOULD_EMPTY_HAND', 'Destroying these cards would leave your hand empty');
+  d.hand = d.hand.filter((c) => !gone.has(c.id));
+  d.deck = d.deck.filter((c) => !gone.has(c.id));
+  draw(d, events);
+  return null;
+}
+
+/**
+ * Adds a copy of each target (same rank, suit and enhancement, new id `x<n>`) to the end of the
+ * deck and of the hand. The hand may end up one card over `handSize` until cards leave it.
+ */
+function duplicateCards(d: Draft, ids: readonly string[]): RunError | null {
+  for (const id of ids) {
+    const card = d.hand.find((c) => c.id === id);
+    if (!card) return err('INVALID_CARDS', 'A selected card is not in your hand');
+    const copy: RunCard = { ...card, id: `x${d.nextCardNumber++}` };
+    d.deck = [...d.deck, copy];
+    d.hand.push(copy);
+  }
+  return null;
+}
+
+function sellConsumable(
+  d: Draft,
+  instanceId: string,
+  content: RunContent,
+  events: RunEvent[],
+): RunError | null {
+  const index = d.consumables.findIndex((c) => c.instanceId === instanceId);
+  if (index === -1) return err('INVALID_CONSUMABLE', 'No such consumable');
+  d.money += consumableSellValue(d.consumables[index]!, content);
+  d.consumables.splice(index, 1);
+  events.push({ type: 'consumableSold', instanceId, money: d.money });
+  return null;
+}
+
 // ---------------------------------------------------------------- helpers
 
-/** Money you get for selling a joker: half its price, rounded down, at least $1. */
+export function findConsumable(
+  id: string,
+  content: RunContent = DEFAULT_CONTENT,
+): ConsumableDefinition | undefined {
+  return content.consumables.find((c) => c.id === id);
+}
+
+/** Money you get for selling a consumable: half its price, rounded down, at least $1. */
+export function consumableSellValue(
+  consumable: ConsumableInstance,
+  content: RunContent = DEFAULT_CONTENT,
+): number {
+  const cost = findConsumable(consumable.consumableId, content)?.cost ?? 2;
+  return Math.max(1, Math.floor(cost / 2));
+}
+
+/**
+ * Money you get for selling a joker: half what it cost in the shop (its edition's surcharge
+ * included), rounded down, at least $1.
+ */
 export function jokerSellValue(
   joker: JokerInstance,
   content: RunContent = DEFAULT_CONTENT,
 ): number {
-  const cost = content.jokers.find((j) => j.id === joker.jokerId)?.cost ?? 2;
-  return Math.max(1, Math.floor(cost / 2));
+  const base = content.jokers.find((j) => j.id === joker.jokerId)?.cost ?? 2;
+  const surcharge = content.editions.find((e) => e.id === joker.edition)?.cost ?? 0;
+  return Math.max(1, Math.floor((base + surcharge) / 2));
+}
+
+/**
+ * Is there room for one more joker with this edition? An edition that opens slots (`ample`) brings
+ * its own, so it fits a full rail.
+ */
+export function jokerFits(
+  state: Pick<RunState, 'config' | 'jokers'>,
+  edition?: string,
+  content: RunContent = DEFAULT_CONTENT,
+): boolean {
+  const own = content.editions.find((e) => e.id === edition)?.extraJokerSlots ?? 0;
+  return state.jokers.length < jokerSlotsFor(state, content) + own;
+}
+
+/** Joker slots in use right now: the config's plus those opened by the editions of owned jokers. */
+export function jokerSlotsFor(
+  state: Pick<RunState, 'config' | 'jokers'>,
+  content: RunContent = DEFAULT_CONTENT,
+): number {
+  const extra = state.jokers.reduce(
+    (sum, joker) =>
+      sum + (content.editions.find((e) => e.id === joker.edition)?.extraJokerSlots ?? 0),
+    0,
+  );
+  return state.config.jokerSlots + extra;
 }
 
 function currentBoss(d: Draft | RunState, content: RunContent): BossDefinition | undefined {
@@ -695,6 +1205,8 @@ function toDraft(state: RunState): Draft {
     drawPile: [...state.drawPile],
     hand: [...state.hand],
     jokers: [...state.jokers],
+    consumables: [...state.consumables],
+    vouchers: [...state.vouchers],
     handLevels: { ...state.handLevels },
     shop: [...state.shop],
     rng: { ...state.rng },
@@ -703,6 +1215,10 @@ function toDraft(state: RunState): Draft {
 
 function err(code: RunErrorCode, message: string): RunError {
   return { code, message };
+}
+
+function unreachable(value: never): never {
+  throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);
 }
 
 function fail(code: RunErrorCode, message: string): RunResult {

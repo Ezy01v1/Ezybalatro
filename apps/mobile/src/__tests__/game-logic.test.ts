@@ -70,6 +70,19 @@ describe('persistence', () => {
     expect(loadRun().status).toBe('corrupt');
   });
 
+  it('discards a version 1 save (before consumables) and deletes the key', () => {
+    Storage.setItemSync('roguelike.run', JSON.stringify({ ...createRun('V1').state, version: 1 }));
+    expect(loadRun()).toEqual({ status: 'corrupt' });
+    expect(Storage.getItemSync('roguelike.run')).toBeNull();
+  });
+
+  it('loads a run saved with the current version', () => {
+    const { state } = createRun('V2');
+    Storage.setItemSync('roguelike.run', JSON.stringify(state));
+    expect(state.version).toBe(RUN_STATE_VERSION);
+    expect(loadRun()).toEqual({ status: 'ok', run: state });
+  });
+
   it('a finished run is not offered to continue', () => {
     const { state } = createRun('DONE');
     saveRun({ ...state, status: 'lost', phase: 'ended' });

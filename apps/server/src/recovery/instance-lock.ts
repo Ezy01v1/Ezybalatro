@@ -22,6 +22,8 @@ export class InstanceLock {
   private readonly retryMs: number;
   private readonly heartbeatMs: number;
   private heartbeat: NodeJS.Timeout | null = null;
+  /** Set by `release()`: from then on nothing here reconnects, retries or takes the lock. */
+  private released = false;
 
   constructor(
     private readonly opts: {
@@ -35,13 +37,14 @@ export class InstanceLock {
     this.heartbeatMs = opts.heartbeatMs ?? 10_000;
   }
 
-  /** Resolves once this process holds the lock; retries every `retryMs`. Rejects only if aborted. */
+  /** Resolves once this process holds the lock; retries every `retryMs`. Rejects only if aborted or released. */
   async acquire(signal?: AbortSignal): Promise<void> {
     let waiting = false;
     for (;;) {
-      if (signal?.aborted) throw new Error('InstanceLock: acquire aborted');
+      if (signal?.aborted || this.released) throw new Error('InstanceLock: acquire aborted');
       try {
         if (await this.tryOnce()) {
+          if (this.released) throw new Error('InstanceLock: released');
           this.startHeartbeat();
           return;
         }
@@ -51,15 +54,16 @@ export class InstanceLock {
       } catch (error) {
         const detail =
           error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error thrown';
-        this.opts.logger.error(`Instance lock: ${detail}; retrying`);
+        if (!this.released) this.opts.logger.error(`Instance lock: ${detail}; retrying`);
         await this.dropClient();
       }
       await sleep(this.retryMs, signal);
     }
   }
 
-  /** Lets go of the lock (closes its connection). Idempotent. */
+  /** Lets go of the lock (closes its connection) and stops any acquire or heartbeat still running. Idempotent; the instance is not reusable. */
   async release(): Promise<void> {
+    this.released = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     await this.dropClient();
@@ -81,6 +85,7 @@ export class InstanceLock {
   }
 
   private async keepHeld(): Promise<void> {
+    if (this.released) return;
     try {
       if (this.client) {
         await this.client.query('SELECT 1');
@@ -110,6 +115,11 @@ export class InstanceLock {
         if (this.client === client) this.client = null;
       });
       await client.connect();
+      if (this.released) {
+        // Released while connecting: do not keep a session (it would hold the lock).
+        await client.end().catch(() => undefined);
+        throw new Error('InstanceLock: released');
+      }
       this.client = client;
     }
     const result = await this.client.query<{ locked: boolean }>(

@@ -5,7 +5,13 @@ import { colors, layout, motion, radii, spacing } from '@/theme/tokens';
 import { es } from '@/i18n/es';
 import { DecoRule, Text } from '@/ui/primitives';
 
-/** Bottom sheet over a dimmed backdrop. Tapping the backdrop closes it when `onClose` is given. */
+const noop = () => {};
+
+/**
+ * Bottom sheet over a dimmed backdrop. Tapping the backdrop closes it when `onClose` is given;
+ * without it the sheet cannot be dismissed (the backdrop is hidden from screen readers and the
+ * Android back button does nothing).
+ */
 export function Sheet({
   visible,
   title,
@@ -25,14 +31,16 @@ export function Sheet({
       visible={visible}
       transparent
       animationType="none"
-      onRequestClose={onClose}
+      onRequestClose={onClose ?? noop}
       statusBarTranslucent
     >
       <View style={styles.root} testID={testID}>
         <Pressable
           style={StyleSheet.absoluteFill}
           onPress={onClose}
-          accessibilityLabel={es.game.close}
+          accessible={!!onClose}
+          accessibilityLabel={onClose ? es.game.close : undefined}
+          importantForAccessibility={onClose ? 'auto' : 'no'}
           disabled={!onClose}
         >
           <Animated.View entering={FadeIn.duration(motion.duration.fast)} style={styles.backdrop} />

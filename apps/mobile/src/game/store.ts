@@ -1,6 +1,7 @@
 import {
   createRun,
   DEFAULT_RUN_CONFIG,
+  findConsumable,
   runReducer,
   type RunAction,
   type RunConfig,
@@ -41,10 +42,12 @@ export interface GameStore {
   dealCount: number;
   /** Sort chosen by the player; re-applied (through the engine) every time new cards are drawn. */
   sortMode: 'rank' | 'suit' | null;
+  /** Consumable waiting for the player to pick its cards. Never saved to disk. */
+  targeting: { instanceId: string } | null;
 
   hydrate(): void;
   startRun(seed?: string, config?: RunConfig): void;
-  /** 'limit' when 5 cards are already selected. */
+  /** 'limit' when the selection already has the most cards allowed (the consumable's max while targeting). */
   toggleCard(cardId: string): 'ok' | 'limit';
   play(): void;
   finishPlayback(): void;
@@ -52,6 +55,15 @@ export interface GameStore {
   sortHand(by: 'rank' | 'suit'): void;
   buy(offerIndex: number): RunErrorCode | null;
   sellJoker(instanceId: string): void;
+  /** Enters card-picking mode; only in a blind, with no scoring running, for consumables that take cards. */
+  beginTargeting(instanceId: string): void;
+  cancelTargeting(): void;
+  /** Uses the consumable (on the selected cards while targeting). Keeps the mode and selection on error. */
+  applyConsumable(instanceId: string): RunErrorCode | null;
+  sellConsumable(instanceId: string): void;
+  /** Takes one option of the open pack. Returns the engine's error code (the pack stays open). */
+  pickFromPack(itemIndex: number): RunErrorCode | null;
+  skipPack(): void;
   reroll(): RunErrorCode | null;
   leaveShop(): void;
   moveJoker(from: number, to: number): void;
@@ -119,6 +131,7 @@ export const useGame = create<GameStore>((set, get) => {
     saveStatus: 'unknown',
     dealCount: 0,
     sortMode: null,
+    targeting: null,
 
     hydrate() {
       const loaded = loadRun();
@@ -132,6 +145,7 @@ export const useGame = create<GameStore>((set, get) => {
       set({
         run: state,
         selected: [],
+        targeting: null,
         playback: null,
         pendingRun: null,
         pendingEvents: [],
@@ -142,20 +156,26 @@ export const useGame = create<GameStore>((set, get) => {
     },
 
     toggleCard(cardId) {
-      const { selected, run, playback } = get();
+      const { selected, run, playback, targeting } = get();
       if (!run || playback) return 'ok';
       if (selected.includes(cardId)) {
         set({ selected: selected.filter((id) => id !== cardId) });
         return 'ok';
       }
-      if (selected.length >= run.config.maxCardsPerAction) return 'limit';
+      const targeted = targeting
+        ? run.consumables.find((c) => c.instanceId === targeting.instanceId)
+        : undefined;
+      const limit =
+        (targeted && findConsumable(targeted.consumableId)?.targets?.max) ??
+        run.config.maxCardsPerAction;
+      if (selected.length >= limit) return 'limit';
       set({ selected: [...selected, cardId] });
       return 'ok';
     },
 
     play() {
-      const { run, selected, playback } = get();
-      if (!run || playback || selected.length === 0) return;
+      const { run, selected, playback, targeting } = get();
+      if (!run || playback || targeting || selected.length === 0) return;
       // Left-to-right play order follows the hand order, not the tapping order.
       const ordered = run.hand.filter((c) => selected.includes(c.id)).map((c) => c.id);
       const result = runReducer(run, { type: 'play', cardIds: ordered });
@@ -186,8 +206,8 @@ export const useGame = create<GameStore>((set, get) => {
     },
 
     discard() {
-      const { run, selected, playback } = get();
-      if (!run || playback || selected.length === 0) return;
+      const { run, selected, playback, targeting } = get();
+      if (!run || playback || targeting || selected.length === 0) return;
       const result = dispatch({ type: 'discard', cardIds: selected });
       if (result.ok) set({ selected: [], dealCount: get().dealCount + 1 });
       resort();
@@ -207,6 +227,49 @@ export const useGame = create<GameStore>((set, get) => {
       dispatch({ type: 'sellJoker', instanceId });
     },
 
+    beginTargeting(instanceId) {
+      const { run, playback } = get();
+      if (!run || playback || run.phase !== 'blind') return;
+      const instance = run.consumables.find((c) => c.instanceId === instanceId);
+      if (!instance || !findConsumable(instance.consumableId)?.targets) return;
+      set({ targeting: { instanceId }, selected: [] });
+    },
+
+    cancelTargeting() {
+      set({ targeting: null, selected: [] });
+    },
+
+    applyConsumable(instanceId) {
+      const { run, selected, targeting, playback } = get();
+      if (!run) return 'RUN_OVER';
+      // The hand on screen is still being counted: the run already holds its result.
+      if (playback) return 'INVALID_PHASE';
+      const cardIds =
+        targeting?.instanceId === instanceId
+          ? run.hand.filter((c) => selected.includes(c.id)).map((c) => c.id)
+          : undefined;
+      const result = dispatch({ type: 'applyConsumable', instanceId, cardIds });
+      if (!result.ok) return result.code;
+      set({ selected: [], targeting: null, dealCount: get().dealCount + 1 });
+      resort();
+      return null;
+    },
+
+    sellConsumable(instanceId) {
+      if (get().playback) return;
+      if (!dispatch({ type: 'sellConsumable', instanceId }).ok) return;
+      if (get().targeting?.instanceId === instanceId) set({ targeting: null, selected: [] });
+    },
+
+    pickFromPack(itemIndex) {
+      const result = dispatch({ type: 'pickFromPack', itemIndex });
+      return result.ok ? null : result.code;
+    },
+
+    skipPack() {
+      dispatch({ type: 'skipPack' });
+    },
+
     reroll() {
       const result = dispatch({ type: 'reroll' });
       return result.ok ? null : result.code;
@@ -223,7 +286,7 @@ export const useGame = create<GameStore>((set, get) => {
 
     abandon() {
       dispatch({ type: 'abandon' });
-      set({ selected: [] });
+      set({ selected: [], targeting: null });
     },
 
     dismissRoundSummary() {
@@ -235,6 +298,7 @@ export const useGame = create<GameStore>((set, get) => {
       set({
         run: null,
         selected: [],
+        targeting: null,
         playback: null,
         pendingRun: null,
         roundSummary: null,

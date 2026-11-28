@@ -56,6 +56,10 @@ export const typography = {
     fontVariant: ['tabular-nums'],
   },
   cardIndex: { fontFamily: fonts.display, fontSize: 19, lineHeight: 20 },
+  /** Rank on a deck-viewer tile. */
+  tileIndex: { fontFamily: fonts.display, fontSize: 14, lineHeight: 15 },
+  /** Three-letter enhancement tag on a card. */
+  badge: { fontFamily: fonts.uiBold, fontSize: 11, lineHeight: 14 },
 } as const;
 
 export const spacing = { xxs: 2, xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
@@ -70,6 +74,16 @@ export const layout = {
   card: { width: 60, height: 84, maxWidth: 72, minVisible: 38, lift: 16 },
   jokerSlot: { width: 58, height: 80 },
   actionBarHeight: 56,
+  /** Consumable tickets: compact (blind tool row) and wide (shop). Height = touch target. */
+  consumableSlot: { minWidth: 56, height: 48, heightWide: 56 },
+  /** Tile of a card in the deck viewer. */
+  deckTile: { width: 36, height: 50, suitSize: 12 },
+  /** Thumbnail of an option in the pack sheet. */
+  packThumb: { width: 52, height: 72 },
+  /** Two-line buy button of the compact offer rows. */
+  priceButton: { minWidth: 80 },
+  /** An option row of the pack sheet. */
+  packRow: { minHeight: 80 },
   /** Cards and other fixed-size boxes cap text scaling so they do not overflow. */
   fixedBoxFontScale: 1.2,
 } as const;
@@ -86,4 +100,31 @@ export const motion = {
   stagger: { deal: 40, play: 50, discard: 30 },
   /** The scoring playback never takes longer than this; steps get shorter instead. */
   maxScoringMs: 2500,
+  /** How long a transient notice ("Vendido por $1") stays on screen. */
+  noticeMs: 2500,
+  // Table mode (docs/design/fase4-mesa-diseno.md §3).
+  dealStaggerMs: 60,
+  dealMs: 220,
+  flipMs: 260,
+  chipsToPotMs: 300,
+  potToWinnerMs: 450,
+  timerLowAtMs: 5000,
+  waitingHintAfterMs: 5000,
+} as const;
+
+/** Table mode colors, built from the existing palette (no new hues). */
+export const table = {
+  felt: colors.surface,
+  feltEdge: 'rgba(201,163,90,0.4)',
+  seatEmpty: colors.border,
+  timer: colors.chips,
+  timerLow: colors.mult,
+  winner: colors.money,
+} as const;
+
+export const sizes = {
+  seatAvatar: 44,
+  heroCard: { w: 64, h: 90 },
+  boardCard: { w: 44, h: 62 },
+  actionButtonMinHeight: 48,
 } as const;

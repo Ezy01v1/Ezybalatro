@@ -5,6 +5,8 @@ Fecha: 2026-10-03
 ## Contexto
 Necesitamos Postgres, una cuenta de invitado al primer arranque, la posibilidad de vincular después Google/Apple/email **conservando el mismo usuario** (progreso y wallet), borrado de cuenta desde la app (Apple lo exige) y planes gratuitos al inicio, todo con un solo dev. El roguelike funciona offline: el invitado se crea cuando hay red y nunca bloquea jugar.
 
+> **Enmienda (2026-11-24):** por ahora no habrá login con Google, Apple ni email (Apple cobra por el programa de desarrolladores y no hace falta todavía). Solo existe la cuenta de invitado; las menciones de vinculación de abajo quedan como contexto por si se retoma. Consecuencia: si el usuario desinstala la app o borra sus datos, pierde la cuenta y sus fichas.
+
 ## Opciones consideradas
 1. **Supabase (Postgres + Auth)**
    - Sign-in anónimo y vinculación de identidades (`linkIdentity` para OAuth, `updateUser` para email) que vuelven permanente al anónimo con el mismo `user.id`. *Verificar* en la doc vigente: el requisito de habilitar "manual linking" y qué pasa si la identidad ya pertenece a otro usuario.

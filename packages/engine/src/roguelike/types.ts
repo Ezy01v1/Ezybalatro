@@ -12,6 +12,8 @@ export interface JokerInstance {
   readonly jokerId: string;
   /** Per-instance counters (e.g. hands played since bought). Numbers only, so it serializes. */
   readonly state: Readonly<Record<string, number>>;
+  /** Edition id (see `EditionDefinition`), if the joker came with one from the shop. */
+  readonly edition?: string;
 }
 
 /** What a joker or an enhancement adds. Applied in this order: chips, then +mult, then ×mult. */
@@ -39,6 +41,12 @@ export interface HandContext {
   readonly handsLeft: number;
   readonly discardsLeft: number;
   readonly money: number;
+  /**
+   * Luck: true with probability n / d, drawn from the run's score stream in evaluation order.
+   * Always false when `n <= 0`, `d` is not a positive integer, or the hand is scored without a
+   * generator; always true (drawing nothing) when `n >= d`.
+   */
+  roll(n: number, d: number): boolean;
 }
 
 export interface DiscardContext {
@@ -69,6 +77,11 @@ export interface JokerDefinition {
   readonly initialState?: Readonly<Record<string, number>>;
   /** Once per scoring card, right after that card adds its chips. */
   onCardScored?(self: JokerInstance, ctx: HandContext, card: RunCard): JokerEffect | undefined;
+  /**
+   * Extra passes for a scoring card (not for cards left in hand), asked once per card before it
+   * scores. Counts add up across jokers and the card's enhancement, capped at `MAX_RETRIGGERS`.
+   */
+  retriggers?(self: JokerInstance, ctx: HandContext, card: RunCard): number;
   /** Once per card left in hand. */
   onCardHeld?(self: JokerInstance, ctx: HandContext, card: RunCard): JokerEffect | undefined;
   /** Once per hand, after all cards. */
@@ -78,12 +91,95 @@ export interface JokerDefinition {
   onShopEnter?(self: JokerInstance, ctx: ShopEnterContext): JokerEffect | undefined;
 }
 
+/**
+ * A joker edition: a bonus of its own, applied once per hand right after the joker's effect, and/or
+ * extra joker slots while the joker is owned. `cost` is added to the shop price.
+ */
+export interface EditionDefinition {
+  readonly id: string;
+  /** Surcharge on the joker's shop price (and half of it, rounded down, on the sell value). */
+  readonly cost: number;
+  readonly effect?: Effect;
+  readonly extraJokerSlots?: number;
+}
+
 /** Card modifier (e.g. extra chips when scored). Same idea as jokers, but attached to a card. */
 export interface EnhancementDefinition {
   readonly id: string;
   onScored?(card: RunCard, ctx: HandContext): Effect | undefined;
   onHeld?(card: RunCard, ctx: HandContext): Effect | undefined;
+  /** Extra passes for this scoring card; see `JokerDefinition.retriggers`. */
+  retriggers?(card: RunCard, ctx: HandContext): number;
 }
+
+/** One operation of a consumable, applied in order. Adding a consumable never touches the reducer. */
+export type ConsumableOp =
+  | { readonly op: 'levelUpHand'; readonly hand: HandCategory }
+  | { readonly op: 'enhanceCards'; readonly enhancement: string }
+  | { readonly op: 'changeSuit'; readonly suit: Suit }
+  | { readonly op: 'shiftRank'; readonly delta: number }
+  | { readonly op: 'destroyCards' }
+  | { readonly op: 'duplicateCard' };
+
+/** A single-use card. Bought into the inventory, used later (in the shop or in a round). */
+export interface ConsumableDefinition {
+  readonly id: string;
+  /** Shop price. */
+  readonly cost: number;
+  /**
+   * Cards it asks for. `null` = asks for none, so it can be used in the shop; otherwise it can
+   * only be used during a blind, on cards from the hand.
+   */
+  readonly targets: { readonly min: number; readonly max: number } | null;
+  readonly ops: readonly ConsumableOp[];
+}
+
+/** A consumable held in the inventory. */
+export interface ConsumableInstance {
+  /** Unique within the run ("c1", "c2"…). */
+  readonly instanceId: string;
+  readonly consumableId: string;
+}
+
+/** Config numbers a voucher can change (the key is the `RunConfig` field it adds to). */
+export type ModifiableConfigKey =
+  'hands' | 'discards' | 'jokerSlots' | 'consumableSlots' | 'rerollBaseCost' | 'interestCap';
+
+export interface ConfigModifier {
+  readonly key: ModifiableConfigKey;
+  readonly delta: number;
+}
+
+/** A permanent rule change bought in the shop: it only adds `delta`s to the run's config. */
+export interface VoucherDefinition {
+  readonly id: string;
+  /** Shop price. */
+  readonly cost: number;
+  readonly modifiers: readonly ConfigModifier[];
+}
+
+export type PackKind = 'joker' | 'consumable' | 'card';
+
+/** A pack bought in the shop: opens at once, `size` options are shown and `picks` can be taken. */
+export interface PackDefinition {
+  readonly id: string;
+  /** Shop price. */
+  readonly cost: number;
+  readonly kind: PackKind;
+  readonly size: number;
+  readonly picks: number;
+}
+
+/** One option inside an open pack. A card gets its id only when it is picked. */
+export type PackItem =
+  | { readonly kind: 'joker'; readonly jokerId: string }
+  | { readonly kind: 'consumable'; readonly consumableId: string }
+  | {
+      readonly kind: 'card';
+      readonly suit: Suit;
+      readonly rank: Rank;
+      readonly enhancement: string;
+    };
 
 export type BlindKind = 'small' | 'big' | 'boss';
 
@@ -112,6 +208,10 @@ export interface HandTypeStats {
 export interface RunContent {
   readonly jokers: readonly JokerDefinition[];
   readonly enhancements: readonly EnhancementDefinition[];
+  readonly editions: readonly EditionDefinition[];
   readonly bosses: readonly BossDefinition[];
+  readonly consumables: readonly ConsumableDefinition[];
+  readonly packs: readonly PackDefinition[];
+  readonly vouchers: readonly VoucherDefinition[];
   readonly handTypes: Readonly<Record<HandCategory, HandTypeStats>>;
 }

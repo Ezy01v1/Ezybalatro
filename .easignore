@@ -1,0 +1,40 @@
+﻿node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# Expo
+.expo/
+web-build/
+expo-env.d.ts
+apps/mobile/ios/
+apps/mobile/android/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+npm-debug.log*
+pnpm-debug.log*
+# Prisma generated client and embedded Postgres data (apps/server)
+apps/server/src/generated/
+apps/server/.local-db/
+
+# EAS only: local tooling folders with symlinks
+.superpowers/
+apps/server/.agents/
+apps/server/.claude/
+apps/server/.windsurf/
+apps/server/skills-lock.json
+.claude/
+docs/
+

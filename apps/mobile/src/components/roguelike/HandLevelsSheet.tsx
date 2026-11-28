@@ -6,7 +6,7 @@ import { es, HAND_NAMES } from '@/i18n/es';
 import { spacing } from '@/theme/tokens';
 import { Button, Text } from '@/ui/primitives';
 import { useArmed } from '@/ui/useArmed';
-import { Sheet } from './Sheet';
+import { Sheet } from '@/components/shared/Sheet';
 
 /** Hand type → level, chips and mult (values from the engine), plus "abandon run". */
 export function HandLevelsSheet({
